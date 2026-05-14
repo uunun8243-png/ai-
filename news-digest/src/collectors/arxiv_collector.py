@@ -21,8 +21,11 @@ class ArxivCollector(BaseCollector):
         items = []
 
         for cat in self.CATEGORIES:
-            cat_items = await asyncio.to_thread(self._fetch_category, cat)
-            items.extend(cat_items)
+            try:
+                cat_items = await asyncio.to_thread(self._fetch_category, cat)
+                items.extend(cat_items)
+            except Exception:
+                print(f"  ⚠ Arxiv category '{cat}' 获取失败，跳过")
 
         return items
 
@@ -30,25 +33,25 @@ class ArxivCollector(BaseCollector):
         """同步辅助函数，在 asyncio.to_thread 中运行。"""
         cat_items: List[NewsItem] = []
 
-        with arxiv.Client() as client:
-            search = arxiv.Search(
-                query=f"cat:{category}",
-                max_results=20,
-                sort_by=arxiv.SortCriterion.SubmittedDate,
-            )
-            for result in client.results(search):
-                published = result.published
-                if published.tzinfo is None:
-                    published = published.replace(tzinfo=timezone.utc)
+        client = arxiv.Client()
+        search = arxiv.Search(
+            query=f"cat:{category}",
+            max_results=20,
+            sort_by=arxiv.SortCriterion.SubmittedDate,
+        )
+        for result in client.results(search):
+            published = result.published
+            if published.tzinfo is None:
+                published = published.replace(tzinfo=timezone.utc)
 
-                cat_items.append(NewsItem(
-                    title=result.title,
-                    url=result.entry_id,
-                    source=self.source_name,
-                    published=published,
-                    summary=result.summary[:500],
-                    category=self._categorize(category),
-                ))
+            cat_items.append(NewsItem(
+                title=result.title,
+                url=result.entry_id,
+                source=self.source_name,
+                published=published,
+                summary=result.summary[:500],
+                category=self._categorize(category),
+            ))
 
         return cat_items
 
