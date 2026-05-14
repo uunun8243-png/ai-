@@ -1,0 +1,42 @@
+# news-digest/.github/workflows/daily-digest.yml
+name: AI News Daily Digest
+
+on:
+  schedule:
+    # 北京时间 08:00 = UTC 00:00
+    - cron: '0 0 * * *'
+    # 北京时间 14:00 = UTC 06:00
+    - cron: '0 6 * * *'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r news-digest/requirements.txt
+
+      - name: Determine batch
+        id: batch
+        run: |
+          HOUR=$(date -u +%H)
+          if [ "$HOUR" = "0" ]; then
+            echo "batch=上午" >> $GITHUB_OUTPUT
+          else
+            echo "batch=下午" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run digest pipeline
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          cd news-digest
+          python -m src.main
