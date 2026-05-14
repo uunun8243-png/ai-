@@ -99,6 +99,7 @@ class FeishuNotifier:
             return False
 
         total = len(items)
+        success_count = 0
         async with httpx.AsyncClient() as client:
             for i, item in enumerate(items, 1):
                 if not item.analysis:
@@ -108,11 +109,15 @@ class FeishuNotifier:
                 header = f"🤖 AI 技术日报 · {batch_label}场\n\n"
                 payload = self._format_text_message(header + msg_text)
 
-                resp = await client.post(
-                    self.webhook_url,
-                    json=payload,
-                    timeout=10.0,
-                )
-                resp.raise_for_status()
+                try:
+                    resp = await client.post(
+                        self.webhook_url,
+                        json=payload,
+                        timeout=10.0,
+                    )
+                    resp.raise_for_status()
+                    success_count += 1
+                except Exception as e:
+                    print(f"  ⚠ 推送第 {i} 条失败: {e}")
 
-        return True
+        return success_count > 0

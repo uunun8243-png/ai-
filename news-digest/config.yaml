@@ -9,12 +9,9 @@ sources:
   arxiv: true
   github_trending: true
   hackernews: true
-  openai_blog: true
-  anthropic_blog: true
-  google_ai_blog: true
+  blogs: true
   reddit_ml: true
-  jiqizhixin: true
-  liangziwei: true
+  zh_sources: true
 
 schedule:
   time: "08:00"
