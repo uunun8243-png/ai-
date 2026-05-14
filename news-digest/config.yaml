@@ -1,0 +1,25 @@
+feishu:
+  webhook_url: ""
+
+deepseek:
+  api_key: ""
+  model: "deepseek-chat"
+
+sources:
+  arxiv: true
+  github_trending: true
+  hackernews: true
+  openai_blog: true
+  anthropic_blog: true
+  google_ai_blog: true
+  reddit_ml: true
+  jiqizhixin: true
+  liangziwei: true
+
+schedule:
+  time: "08:00"
+  timezone: "Asia/Shanghai"
+
+analysis:
+  max_news_per_day: 10
+  output_language: "zh-CN"
