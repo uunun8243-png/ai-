@@ -24,8 +24,12 @@ def load_config() -> dict:
     # 环境变量覆盖（用于 GitHub Actions Secrets）
     if os.getenv("DEEPSEEK_API_KEY"):
         config.setdefault("deepseek", {})["api_key"] = os.environ["DEEPSEEK_API_KEY"]
-    if os.getenv("FEISHU_WEBHOOK_URL"):
-        config.setdefault("feishu", {})["webhook_url"] = os.environ["FEISHU_WEBHOOK_URL"]
+    if os.getenv("FEISHU_APP_ID"):
+        config.setdefault("feishu", {})["app_id"] = os.environ["FEISHU_APP_ID"]
+    if os.getenv("FEISHU_APP_SECRET"):
+        config.setdefault("feishu", {})["app_secret"] = os.environ["FEISHU_APP_SECRET"]
+    if os.getenv("FEISHU_CHAT_ID"):
+        config.setdefault("feishu", {})["chat_id"] = os.environ["FEISHU_CHAT_ID"]
 
     return config
 

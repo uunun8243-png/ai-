@@ -1,5 +1,7 @@
 feishu:
-  webhook_url: ""
+  app_id: ""
+  app_secret: ""
+  chat_id: ""
 
 deepseek:
   api_key: ""

@@ -1,4 +1,3 @@
-# news-digest/tests/test_feishu.py
 import pytest
 from datetime import datetime, timezone
 from src.models import NewsItem
@@ -6,23 +5,23 @@ from src.notifiers.feishu import FeishuNotifier
 
 
 @pytest.mark.asyncio
-async def test_no_webhook_returns_false():
-    config = {"feishu": {"webhook_url": ""}}
+async def test_missing_config_returns_false():
+    config = {"feishu": {"app_id": "", "app_secret": "", "chat_id": ""}}
     notifier = FeishuNotifier(config)
     result = await notifier.send_news([])
     assert result is False
 
 
-def test_format_text_message():
-    config = {"feishu": {"webhook_url": "https://example.com"}}
+@pytest.mark.asyncio
+async def test_partial_config_returns_false():
+    config = {"feishu": {"app_id": "id", "app_secret": "", "chat_id": "chat"}}
     notifier = FeishuNotifier(config)
-    payload = notifier._format_text_message("Hello")
-    assert payload["msg_type"] == "text"
-    assert payload["content"]["text"] == "Hello"
+    result = await notifier.send_news([])
+    assert result is False
 
 
 def test_format_analysis_text_includes_title():
-    config = {"feishu": {"webhook_url": "https://example.com"}}
+    config = {"feishu": {"app_id": "id", "app_secret": "secret", "chat_id": "chat"}}
     notifier = FeishuNotifier(config)
     item = NewsItem(
         title="GPT-5发布",

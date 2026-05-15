@@ -13,11 +13,21 @@
 
 ### 前置准备
 
-1. **飞书群机器人**
-   - 在飞书创建群聊 → 群设置 → 群机器人 → 添加机器人 → Webhook 机器人
-   - 复制 Webhook URL
+1. **飞书开发者后台创建应用**
+   - 访问 [飞书开发者平台](https://open.feishu.cn/app)
+   - 创建企业自建应用（类型选「企业自建应用」）
+   - 获取 **App ID** 和 **App Secret**
+   - **不需要**发布或申请任何权限，机器人只需要发消息到群聊
 
-2. **DeepSeek API Key**
+2. **获取群聊 Chat ID**
+   - 在飞书打开目标群 → 群设置 → 更多群信息
+   - 复制底部的「群 ID」
+
+3. **将机器人添加到群聊**
+   - 在飞书开发者后台 → 应用功能 → 机器人 → 开启机器人
+   - 在飞书搜索你的应用名称 → 添加到目标群聊
+
+4. **DeepSeek API Key**
    - 访问 https://platform.deepseek.com/ 获取 API Key
 
 ### 部署
@@ -28,7 +38,9 @@
 
    | Name | Value |
    |------|-------|
-   | `FEISHU_WEBHOOK_URL` | 你的飞书 Webhook URL |
+   | `FEISHU_APP_ID` | 你的飞书应用 App ID |
+   | `FEISHU_APP_SECRET` | 你的飞书应用 App Secret |
+   | `FEISHU_CHAT_ID` | 群聊的 Chat ID |
    | `DEEPSEEK_API_KEY` | 你的 DeepSeek API Key |
 
 3. 启用 GitHub Actions
