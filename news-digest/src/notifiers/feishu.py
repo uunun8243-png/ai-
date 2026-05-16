@@ -198,7 +198,7 @@ class FeishuNotifier:
             return False
 
         cutoff = datetime.now(timezone.utc) - timedelta(days=3)
-        cutoff_ts = str(int(cutoff.timestamp()))
+        cutoff_ts = int(cutoff.timestamp())
 
         async with httpx.AsyncClient() as client:
             try:
@@ -233,14 +233,20 @@ class FeishuNotifier:
                         if sender_type != "app" or msg_type != "interactive":
                             continue
                         create_time = msg.get("create_time", "0")
-                        if create_time < cutoff_ts:
+                        if create_time and int(create_time) < cutoff_ts:
                             msg_id = msg.get("message_id", "")
                             if msg_id:
-                                await client.delete(
-                                    f"{FEISHU_BASE}/im/v1/messages/{msg_id}",
-                                    headers={"Authorization": f"Bearer {token}"},
-                                    timeout=10.0,
-                                )
+                                try:
+                                    del_resp = await client.delete(
+                                        f"{FEISHU_BASE}/im/v1/messages/{msg_id}",
+                                        headers={"Authorization": f"Bearer {token}"},
+                                        timeout=10.0,
+                                    )
+                                    del_data = del_resp.json()
+                                    if del_data.get("code") != 0:
+                                        print(f"  ⚠ 删除消息 {msg_id} 失败: {del_data}")
+                                except Exception as e:
+                                    print(f"  ⚠ 删除消息 {msg_id} 异常: {e}")
 
                     page_token = data.get("data", {}).get("page_token")
                     if not data.get("data", {}).get("has_more"):

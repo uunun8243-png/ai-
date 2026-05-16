@@ -108,3 +108,13 @@ def test_card_color():
     assert _card_color("中") == "orange"
     assert _card_color("低") == "blue"
     assert _card_color("未知") == "blue"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_returns_false_on_api_error():
+    """验证 cleanup 在 API 报错时返回 False 而非崩溃。"""
+    config = {"feishu": {"app_id": "id", "app_secret": "secret", "chat_id": "chat"}}
+    notifier = FeishuNotifier(config)
+    # 没有有效 token，httpx 请求会失败，但不应崩溃
+    result = await notifier._cleanup_old_messages("")
+    assert result is False
