@@ -38,6 +38,128 @@ class FeishuNotifier:
         order = {"高": 0, "中": 1, "低": 2}
         return sorted(items, key=lambda x: order.get(_infer_importance(x.analysis or {}), 3))
 
+    def _build_tab_card(self, items: List[NewsItem], batch_label: str) -> dict:
+        """将多条新闻构建为一张带 Tab 切换的飞书消息卡片。
+
+        Tab 结构：概览 | 高(N) | 中(N) | 低(N)
+        """
+        valid = [it for it in items if it.analysis]
+        sorted_items = self._sort_by_priority(valid)
+
+        groups = {"高": [], "中": [], "低": []}
+        for it in sorted_items:
+            importance = _infer_importance(it.analysis or {})
+            groups[importance].append(it)
+
+        tabs = []
+        tab_elements_map = {}
+
+        def _make_tab(tab_id: str, label: str, selected: bool = False):
+            return {"tab_id": tab_id, "tab": {"tag": "plain_text", "content": label}, "selected": selected}
+
+        # 1. 概览 Tab
+        overview_items = []
+        for it in sorted_items:
+            imp = _infer_importance(it.analysis or {})
+            badge = {"高": "🔴", "中": "🟡", "低": "🔵"}.get(imp, "⚪")
+            action = it.analysis.get("action", "")
+            one_liner = it.analysis.get("one_liner", "")
+            overview_items.append(f"{badge} **[{action}]** {it.title}\n{one_liner}")
+
+        overview_md = "\n\n---\n\n".join(overview_items) if overview_items else "暂无新闻"
+        overview_elements = [{"tag": "div", "text": {"tag": "lark_md", "content": overview_md}}]
+
+        tabs.append(_make_tab("overview", "📋 简报", True))
+        tab_elements_map["overview"] = overview_elements
+
+        # 2. 高/中/低 Tab
+        imp_labels = [("high", "高", "🔴"), ("medium", "中", "🟡"), ("low", "低", "🔵")]
+        for tab_id, key, emoji in imp_labels:
+            group_items = groups[key]
+            elements = []
+            for idx, it in enumerate(group_items):
+                a = it.analysis or {}
+                elements.append({
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": f"**{it.title}**\n{a.get('category', '')} · {it.source}"},
+                })
+                elements.append({"tag": "hr"})
+
+                sections = [
+                    ("📖 背景", a.get("background")),
+                    ("🔍 核心分析", a.get("core_analysis")),
+                    ("💡 为什么重要", a.get("why_matters")),
+                    ("📚 学习价值", a.get("learning_value")),
+                ]
+                for label, content in sections:
+                    if content:
+                        elements.append({
+                            "tag": "div",
+                            "text": {"tag": "lark_md", "content": f"**{label}**\n{content}"},
+                        })
+
+                qs = a.get("quick_start", "")
+                if qs and qs != "无需上手":
+                    elements.append({
+                        "tag": "div",
+                        "text": {"tag": "lark_md", "content": f"**🚀 快速上手**\n{qs}"},
+                    })
+
+                footer_parts = []
+                if a.get("action"):
+                    footer_parts.append(f"📌 {a['action']}")
+                if a.get("trend"):
+                    footer_parts.append(f"📈 {a['trend']}")
+                if footer_parts:
+                    elements.append({"tag": "hr"})
+                    elements.append({
+                        "tag": "div",
+                        "text": {"tag": "lark_md", "content": "  ·  ".join(footer_parts)},
+                    })
+
+                if a.get("insight"):
+                    elements.append({
+                        "tag": "div",
+                        "text": {"tag": "lark_md", "content": f"💬 {a['insight']}"},
+                    })
+
+                elements.append({
+                    "tag": "action",
+                    "actions": [{
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "🔗 阅读原文"},
+                        "type": "default",
+                        "url": it.url,
+                    }],
+                })
+
+                if idx < len(group_items) - 1:
+                    elements.append({"tag": "hr"})
+
+            if not elements:
+                elements.append({
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": "暂无此优先级的新闻"},
+                })
+
+            tab_count = len(group_items)
+            tabs.append(_make_tab(tab_id, f"{emoji} {key}({tab_count})", False))
+            tab_elements_map[tab_id] = elements
+
+        card = {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": f"📋 AI 日报 · {batch_label}"},
+                "template": "blue",
+            },
+            "elements": [
+                {"tag": "tab", "tabs": tabs},
+                *[{"tag": "tab_content", "tab_id": tid, "elements": el}
+                  for tid, el in tab_elements_map.items()],
+            ],
+        }
+        return card
+
     async def _get_tenant_token(self) -> str:
         """获取飞书 tenant_access_token。"""
         async with httpx.AsyncClient() as client:
