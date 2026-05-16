@@ -18,7 +18,7 @@ from src.notifiers.feishu import FeishuNotifier
 
 
 def load_config() -> dict:
-    load_dotenv()
+    load_dotenv(override=True)
     config_path = Path(__file__).parent.parent / "config.yaml"
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)

@@ -1,6 +1,6 @@
 import json
 import httpx
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from src.models import NewsItem
 
@@ -31,6 +31,139 @@ class FeishuNotifier:
         self.app_id = fc.get("app_id", "")
         self.app_secret = fc.get("app_secret", "")
         self.chat_id = fc.get("chat_id", "")
+
+    @staticmethod
+    def _sort_by_priority(items: List[NewsItem]) -> List[NewsItem]:
+        """按优先级排序：高 → 中 → 低，同级保持原顺序。"""
+        order = {"高": 0, "中": 1, "低": 2}
+        return sorted(items, key=lambda x: order.get(_infer_importance(x.analysis or {}), 3))
+
+    def _build_priority_card(self, items: List[NewsItem], batch_label: str) -> dict:
+        """将多条新闻构建为一张按优先级分区的飞书消息卡片。
+
+        卡片结构：
+          🔴/🟡/🔵 高/中/低 — 每个分区包含文章的完整分析
+          标题行格式：{badge} [{action}] {title} — {one_liner}
+          每个条目含背景/核心分析/为什么重要/学习价值/应用实例等字段
+        """
+        valid = [it for it in items if it.analysis]
+        sorted_items = self._sort_by_priority(valid)
+
+        groups = {"高": [], "中": [], "低": []}
+        for it in sorted_items:
+            importance = _infer_importance(it.analysis or {})
+            groups[importance].append(it)
+
+        elements = []
+
+        # ── 空状态处理 ──
+        if not sorted_items:
+            elements.append({
+                "tag": "div",
+                "text": {"tag": "lark_md", "content": "本次暂无新闻"},
+            })
+            return {
+                "config": {"wide_screen_mode": True},
+                "header": {
+                    "title": {"tag": "plain_text", "content": f"📋 AI 日报 · {batch_label}"},
+                    "template": "blue",
+                },
+                "elements": elements,
+            }
+
+        # ── 优先级分区 ──
+        imp_labels = [("🔴 高", "高"), ("🟡 中", "中"), ("🔵 低", "低")]
+        for section_header, key in imp_labels:
+            group_items = groups[key]
+            elements.append({"tag": "hr"})
+            elements.append({
+                "tag": "div",
+                "text": {"tag": "lark_md", "content": f"**{section_header}（{len(group_items)} 条）**"},
+            })
+
+            if not group_items:
+                elements.append({
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": "暂无此优先级的新闻"},
+                })
+                continue
+
+            for idx, it in enumerate(group_items):
+                a = it.analysis or {}
+                badge = {"高": "🔴", "中": "🟡", "低": "🔵"}.get(key, "⚪")
+                action_label = a.get("action", "")
+                one_liner = a.get("one_liner", "")
+                title_line = f"{badge} **[{action_label}]** {it.title}"
+                if one_liner:
+                    title_line += f" — {one_liner}"
+                elements.append({
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": f"{title_line}\n{a.get('category', '')} · {it.source}"},
+                })
+
+                sections = [
+                    ("📖 背景", a.get("background")),
+                    ("🔍 核心分析", a.get("core_analysis")),
+                    ("💡 为什么重要", a.get("why_matters")),
+                    ("📚 学习价值", a.get("learning_value")),
+                    ("💡 应用实例", a.get("application_example")),
+                ]
+                has_content = any(c for _, c in sections)
+                if has_content:
+                    for label, content in sections:
+                        if content:
+                            elements.append({
+                                "tag": "div",
+                                "text": {"tag": "lark_md", "content": f"**{label}**\n{content}"},
+                            })
+
+                qs = a.get("quick_start", "")
+                if qs and qs != "无需上手":
+                    elements.append({
+                        "tag": "div",
+                        "text": {"tag": "lark_md", "content": f"**🚀 快速上手**\n{qs}"},
+                    })
+
+                footer_parts = []
+                if a.get("action"):
+                    footer_parts.append(f"📌 {a['action']}")
+                if a.get("trend"):
+                    footer_parts.append(f"📈 {a['trend']}")
+                if footer_parts:
+                    elements.append({"tag": "hr"})
+                    elements.append({
+                        "tag": "div",
+                        "text": {"tag": "lark_md", "content": "  ·  ".join(footer_parts)},
+                    })
+
+                if a.get("insight"):
+                    elements.append({
+                        "tag": "div",
+                        "text": {"tag": "lark_md", "content": f"💬 {a['insight']}"},
+                    })
+
+                elements.append({
+                    "tag": "action",
+                    "actions": [{
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "🔗 阅读原文"},
+                        "type": "default",
+                        "url": it.url,
+                    }],
+                })
+
+                if idx < len(group_items) - 1:
+                    elements.append({"tag": "hr"})
+
+        card = {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": f"📋 AI 日报 · {batch_label}"},
+                "template": "blue",
+            },
+            "elements": elements,
+        }
+        return card
 
     async def _get_tenant_token(self) -> str:
         """获取飞书 tenant_access_token。"""
@@ -192,8 +325,73 @@ class FeishuNotifier:
             "elements": elements,
         }
 
+    async def _cleanup_old_messages(self, token: str = "") -> bool:
+        """删除 3 天前的机器人消息。"""
+        if not self.chat_id:
+            return False
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=3)
+        cutoff_ts = int(cutoff.timestamp())
+
+        async with httpx.AsyncClient() as client:
+            try:
+                # 分页查询历史消息
+                page_token = None
+                while True:
+                    params = {
+                        "container_id_type": "chat",
+                        "container_id": self.chat_id,
+                        "page_size": 50,
+                        "sort_type": "ByCreateTimeDesc",
+                    }
+                    if page_token:
+                        params["page_token"] = page_token
+
+                    resp = await client.get(
+                        f"{FEISHU_BASE}/im/v1/messages",
+                        headers={"Authorization": f"Bearer {token}"},
+                        params=params,
+                        timeout=10.0,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if data.get("code") != 0:
+                        print(f"  ⚠ 查询消息失败: {data}")
+                        return False
+
+                    items = data.get("data", {}).get("items", [])
+                    for msg in items:
+                        sender_type = msg.get("sender", {}).get("sender_type", "")
+                        msg_type = msg.get("msg_type", "")
+                        if sender_type != "app" or msg_type != "interactive":
+                            continue
+                        create_time = msg.get("create_time", "0")
+                        if create_time and int(create_time) < cutoff_ts:
+                            msg_id = msg.get("message_id", "")
+                            if msg_id:
+                                try:
+                                    del_resp = await client.delete(
+                                        f"{FEISHU_BASE}/im/v1/messages/{msg_id}",
+                                        headers={"Authorization": f"Bearer {token}"},
+                                        timeout=10.0,
+                                    )
+                                    del_data = del_resp.json()
+                                    if del_data.get("code") != 0:
+                                        print(f"  ⚠ 删除消息 {msg_id} 失败: {del_data}")
+                                except Exception as e:
+                                    print(f"  ⚠ 删除消息 {msg_id} 异常: {e}")
+
+                    page_token = data.get("data", {}).get("page_token")
+                    if not data.get("data", {}).get("has_more"):
+                        break
+            except Exception as e:
+                print(f"  ⚠ 清理旧消息失败: {e}")
+                return False
+
+        return True
+
     async def send_news(self, items: List[NewsItem], batch_label: str = "上午") -> bool:
-        """逐条发送新闻卡片到飞书群。"""
+        """将一批新闻以 Tab 卡片形式发送到飞书群（只发 1 条消息）。"""
         if not self.app_id or not self.app_secret or not self.chat_id:
             print("飞书 API 配置不完整（需要 app_id, app_secret, chat_id）")
             return False
@@ -204,21 +402,20 @@ class FeishuNotifier:
             print(f"  ✗ 获取飞书 token 失败: {e}")
             return False
 
-        total = len(items)
-        success_count = 0
+        # 清理 3 天前的旧卡片
+        try:
+            await self._cleanup_old_messages(token)
+        except Exception as e:
+            print(f"  ⚠ 清理旧消息失败: {e}")
 
-        for i, item in enumerate(items, 1):
-            if not item.analysis:
-                continue
-
-            card = self._build_card(item, i, total)
-            try:
-                await self._send_card(token, card)
-                success_count += 1
-            except Exception as e:
-                print(f"  ⚠ 推送第 {i} 条失败: {e}")
-
-        return success_count > 0
+        # 构建优先级分区卡片并发送
+        try:
+            card = self._build_priority_card(items, batch_label)
+            await self._send_card(token, card)
+            return True
+        except Exception as e:
+            print(f"  ✗ 发送卡片失败: {e}")
+            return False
 
     async def send_alert(self, stage: str, error: str) -> bool:
         """发送失败告警卡片到飞书群。"""

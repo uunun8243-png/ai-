@@ -15,7 +15,7 @@ class GitHubTrendingCollector(BaseCollector):
 
         url = "https://api.github.com/search/repositories"
         params = {
-            "q": "created:>={date} topic:ai OR topic:llm OR topic:machine-learning",
+            "q": "created:>={date} (topic:ai OR topic:llm OR topic:machine-learning)",
             "sort": "stars",
             "per_page": 10,
         }
