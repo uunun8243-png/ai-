@@ -1,6 +1,6 @@
 import json
 import httpx
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from src.models import NewsItem
 
@@ -192,6 +192,65 @@ class FeishuNotifier:
             "elements": elements,
         }
 
+    async def _cleanup_old_messages(self, token: str = "") -> bool:
+        """删除 3 天前的机器人消息。"""
+        if not self.chat_id:
+            return False
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=3)
+        cutoff_ts = str(int(cutoff.timestamp()))
+
+        async with httpx.AsyncClient() as client:
+            try:
+                # 分页查询历史消息
+                page_token = None
+                while True:
+                    params = {
+                        "container_id_type": "chat",
+                        "container_id": self.chat_id,
+                        "page_size": 50,
+                        "sort_type": "ByCreateTimeDesc",
+                    }
+                    if page_token:
+                        params["page_token"] = page_token
+
+                    resp = await client.get(
+                        f"{FEISHU_BASE}/im/v1/messages",
+                        headers={"Authorization": f"Bearer {token}"},
+                        params=params,
+                        timeout=10.0,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if data.get("code") != 0:
+                        print(f"  ⚠ 查询消息失败: {data}")
+                        return False
+
+                    items = data.get("data", {}).get("items", [])
+                    for msg in items:
+                        sender_type = msg.get("sender", {}).get("sender_type", "")
+                        msg_type = msg.get("msg_type", "")
+                        if sender_type != "app" or msg_type != "interactive":
+                            continue
+                        create_time = msg.get("create_time", "0")
+                        if create_time < cutoff_ts:
+                            msg_id = msg.get("message_id", "")
+                            if msg_id:
+                                await client.delete(
+                                    f"{FEISHU_BASE}/im/v1/messages/{msg_id}",
+                                    headers={"Authorization": f"Bearer {token}"},
+                                    timeout=10.0,
+                                )
+
+                    page_token = data.get("data", {}).get("page_token")
+                    if not data.get("data", {}).get("has_more"):
+                        break
+            except Exception as e:
+                print(f"  ⚠ 清理旧消息失败: {e}")
+                return False
+
+        return True
+
     async def send_news(self, items: List[NewsItem], batch_label: str = "上午") -> bool:
         """逐条发送新闻卡片到飞书群。"""
         if not self.app_id or not self.app_secret or not self.chat_id:
@@ -203,6 +262,9 @@ class FeishuNotifier:
         except Exception as e:
             print(f"  ✗ 获取飞书 token 失败: {e}")
             return False
+
+        # 清理 3 天前的旧卡片
+        await self._cleanup_old_messages(token)
 
         total = len(items)
         success_count = 0

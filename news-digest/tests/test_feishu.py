@@ -93,6 +93,16 @@ def test_infer_importance():
     assert _infer_importance({}) == "低"
 
 
+@pytest.mark.asyncio
+async def test_cleanup_missing_config_returns_false():
+    """无配置时 cleanup 不应报错。"""
+    config = {"feishu": {"app_id": "", "app_secret": "", "chat_id": ""}}
+    notifier = FeishuNotifier(config)
+    # 应该静默返回 False，不抛异常
+    result = await notifier._cleanup_old_messages()
+    assert result is False
+
+
 def test_card_color():
     assert _card_color("高") == "red"
     assert _card_color("中") == "orange"
