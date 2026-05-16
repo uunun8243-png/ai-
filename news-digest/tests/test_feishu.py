@@ -1,3 +1,4 @@
+import json
 import pytest
 from datetime import datetime, timezone
 from src.models import NewsItem
@@ -152,55 +153,53 @@ def test_sort_by_priority_empty():
     assert FeishuNotifier._sort_by_priority([]) == []
 
 
-def test_build_tab_card_structure():
-    """Tab 卡片必须包含 tab 选择器和 4 个 tab 内容区块。"""
+def test_build_priority_card_structure():
+    """卡片必须包含 高/中/低 三个分区和 application_example 字段。"""
     config = {"feishu": {"app_id": "id", "app_secret": "secret", "chat_id": "chat"}}
     notifier = FeishuNotifier(config)
     items = [
         NewsItem(title="高优先级新闻", url="https://a.com", source="测试", published=datetime.now(timezone.utc), summary="",
-                 analysis={"category": "技术创新", "one_liner": "一条高优先级", "action": "精读原文", "trend": "中期趋势"}),
+                 analysis={"category": "技术创新", "one_liner": "一条高优先级", "action": "精读原文", "trend": "中期趋势",
+                           "application_example": "可以尝试用 MoE 架构重训分类模型"}),
         NewsItem(title="低优先级新闻", url="https://b.com", source="测试", published=datetime.now(timezone.utc), summary="",
                  analysis={"category": "行业趋势", "one_liner": "一条低优先级", "action": "了解即可"}),
     ]
-    card = notifier._build_tab_card(items, "上午")
+    card = notifier._build_priority_card(items, "上午")
     assert "header" in card
     assert card["header"]["title"]["content"] == "📋 AI 日报 · 上午"
     assert "elements" in card
-
-    # 必须有 tab 组件
-    tab_elements = [e for e in card["elements"] if e.get("tag") == "tab"]
-    assert len(tab_elements) == 1
-    tab_ids = [t["tab_id"] for t in tab_elements[0]["tabs"]]
-    assert "overview" in tab_ids
-    assert "high" in tab_ids
-    assert "medium" in tab_ids
-    assert "low" in tab_ids
-
-    # 必须有 tab_content 组件
-    content_elements = [e for e in card["elements"] if e.get("tag") == "tab_content"]
-    assert len(content_elements) == 4
+    div_texts = [e["text"]["content"] for e in card["elements"] if e.get("tag") == "div" and e.get("text", {}).get("tag") == "lark_md"]
+    # Check title lines contain badge + action + one_liner (no standalone briefing section)
+    assert any("🔴" in t and "[精读原文]" in t and "一条高优先级" in t for t in div_texts), "标题行应包含优先级标记 + action + one_liner"
+    assert any("🔵" in t and "[了解即可]" in t and "一条低优先级" in t for t in div_texts)
+    # Check sections exist
+    assert any("🔴 高" in t for t in div_texts), "缺少高优先级分区"
+    assert any("🟡 中" in t for t in div_texts), "缺少中优先级分区"
+    assert any("🔵 低" in t for t in div_texts), "缺少低优先级分区"
+    # Check application_example appears
+    assert any("应用实例" in t for t in div_texts)
+    assert any("可以尝试用 MoE 架构重训分类模型" in t for t in div_texts)
 
 
-def test_build_tab_card_empty_items():
+def test_build_priority_card_empty_items():
     """空列表也返回有效的卡片结构。"""
     config = {"feishu": {"app_id": "id", "app_secret": "secret", "chat_id": "chat"}}
     notifier = FeishuNotifier(config)
-    card = notifier._build_tab_card([], "下午")
+    card = notifier._build_priority_card([], "下午")
     assert "header" in card
     assert "elements" in card
 
 
-def test_build_tab_card_no_analysis():
+def test_build_priority_card_no_analysis():
     """没有 analysis 的条目应被跳过。"""
     config = {"feishu": {"app_id": "id", "app_secret": "secret", "chat_id": "chat"}}
     notifier = FeishuNotifier(config)
     items = [
         NewsItem(title="无分析", url="https://a.com", source="A", published=datetime.now(timezone.utc), summary=""),
     ]
-    card = notifier._build_tab_card(items, "上午")
-    # 卡片依然包含 overview tab
-    tab = [e for e in card["elements"] if e.get("tag") == "tab"][0]
-    assert "overview" in [t["tab_id"] for t in tab["tabs"]]
+    card = notifier._build_priority_card(items, "上午")
+    div_texts = [e["text"]["content"] for e in card["elements"] if e.get("tag") == "div" and e.get("text", {}).get("tag") == "lark_md"]
+    assert any("暂无新闻" in t for t in div_texts)
 
 
 @pytest.mark.asyncio

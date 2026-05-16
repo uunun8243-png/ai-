@@ -38,10 +38,14 @@ class FeishuNotifier:
         order = {"高": 0, "中": 1, "低": 2}
         return sorted(items, key=lambda x: order.get(_infer_importance(x.analysis or {}), 3))
 
-    def _build_tab_card(self, items: List[NewsItem], batch_label: str) -> dict:
-        """将多条新闻构建为一张带 Tab 切换的飞书消息卡片。
+    def _build_priority_card(self, items: List[NewsItem], batch_label: str) -> dict:
+        """将多条新闻构建为一张按优先级分区的飞书消息卡片。
 
-        Tab 结构：概览 | 高(N) | 中(N) | 低(N)
+        卡片结构：
+          顶部：📋 简报 — 所有标题 + 优先级标签 + one_liner 一览
+          中部：🔴 高(N) — 高优先级新闻完整分析
+          中部：🟡 中(N) — 中优先级新闻完整分析
+          底部：🔵 低(N) — 低优先级新闻完整分析
         """
         valid = [it for it in items if it.analysis]
         sorted_items = self._sort_by_priority(valid)
@@ -51,52 +55,68 @@ class FeishuNotifier:
             importance = _infer_importance(it.analysis or {})
             groups[importance].append(it)
 
-        tabs = []
-        tab_elements_map = {}
+        elements = []
 
-        def _make_tab(tab_id: str, label: str, selected: bool = False):
-            return {"tab_id": tab_id, "tab": {"tag": "plain_text", "content": label}, "selected": selected}
+        # ── 空状态处理 ──
+        if not sorted_items:
+            elements.append({
+                "tag": "div",
+                "text": {"tag": "lark_md", "content": "本次暂无新闻"},
+            })
+            return {
+                "config": {"wide_screen_mode": True},
+                "header": {
+                    "title": {"tag": "plain_text", "content": f"📋 AI 日报 · {batch_label}"},
+                    "template": "blue",
+                },
+                "elements": elements,
+            }
 
-        # 1. 概览 Tab
-        overview_items = []
-        for it in sorted_items:
-            imp = _infer_importance(it.analysis or {})
-            badge = {"高": "🔴", "中": "🟡", "低": "🔵"}.get(imp, "⚪")
-            action = it.analysis.get("action", "")
-            one_liner = it.analysis.get("one_liner", "")
-            overview_items.append(f"{badge} **[{action}]** {it.title}\n{one_liner}")
-
-        overview_md = "\n\n---\n\n".join(overview_items) if overview_items else "暂无新闻"
-        overview_elements = [{"tag": "div", "text": {"tag": "lark_md", "content": overview_md}}]
-
-        tabs.append(_make_tab("overview", "📋 简报", True))
-        tab_elements_map["overview"] = overview_elements
-
-        # 2. 高/中/低 Tab
-        imp_labels = [("high", "高", "🔴"), ("medium", "中", "🟡"), ("low", "低", "🔵")]
-        for tab_id, key, emoji in imp_labels:
+        # ── 优先级分区 ──
+        imp_labels = [("🔴 高", "高"), ("🟡 中", "中"), ("🔵 低", "低")]
+        for section_header, key in imp_labels:
             group_items = groups[key]
-            elements = []
-            for idx, it in enumerate(group_items):
-                a = it.analysis or {}
+            elements.append({"tag": "hr"})
+            elements.append({
+                "tag": "div",
+                "text": {"tag": "lark_md", "content": f"**{section_header}（{len(group_items)} 条）**"},
+            })
+
+            if not group_items:
                 elements.append({
                     "tag": "div",
-                    "text": {"tag": "lark_md", "content": f"**{it.title}**\n{a.get('category', '')} · {it.source}\n{a.get('one_liner', '')}"},
+                    "text": {"tag": "lark_md", "content": "暂无此优先级的新闻"},
                 })
-                elements.append({"tag": "hr"})
+                continue
+
+            for idx, it in enumerate(group_items):
+                a = it.analysis or {}
+                badge = {"高": "🔴", "中": "🟡", "低": "🔵"}.get(key, "⚪")
+                action_label = a.get("action", "")
+                one_liner = a.get("one_liner", "")
+                title_line = f"{badge} **[{action_label}]** {it.title}"
+                if one_liner:
+                    title_line += f" — {one_liner}"
+                elements.append({
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": f"{title_line}\n{a.get('category', '')} · {it.source}"},
+                })
 
                 sections = [
                     ("📖 背景", a.get("background")),
                     ("🔍 核心分析", a.get("core_analysis")),
                     ("💡 为什么重要", a.get("why_matters")),
                     ("📚 学习价值", a.get("learning_value")),
+                    ("💡 应用实例", a.get("application_example")),
                 ]
-                for label, content in sections:
-                    if content:
-                        elements.append({
-                            "tag": "div",
-                            "text": {"tag": "lark_md", "content": f"**{label}**\n{content}"},
-                        })
+                has_content = any(c for _, c in sections)
+                if has_content:
+                    for label, content in sections:
+                        if content:
+                            elements.append({
+                                "tag": "div",
+                                "text": {"tag": "lark_md", "content": f"**{label}**\n{content}"},
+                            })
 
                 qs = a.get("quick_start", "")
                 if qs and qs != "无需上手":
@@ -136,27 +156,13 @@ class FeishuNotifier:
                 if idx < len(group_items) - 1:
                     elements.append({"tag": "hr"})
 
-            if not elements:
-                elements.append({
-                    "tag": "div",
-                    "text": {"tag": "lark_md", "content": "暂无此优先级的新闻"},
-                })
-
-            tab_count = len(group_items)
-            tabs.append(_make_tab(tab_id, f"{emoji} {key}({tab_count})", False))
-            tab_elements_map[tab_id] = elements
-
         card = {
             "config": {"wide_screen_mode": True},
             "header": {
                 "title": {"tag": "plain_text", "content": f"📋 AI 日报 · {batch_label}"},
                 "template": "blue",
             },
-            "elements": [
-                {"tag": "tab", "tabs": tabs},
-                *[{"tag": "tab_content", "tab_id": tid, "elements": el}
-                  for tid, el in tab_elements_map.items()],
-            ],
+            "elements": elements,
         }
         return card
 
@@ -403,13 +409,13 @@ class FeishuNotifier:
         except Exception as e:
             print(f"  ⚠ 清理旧消息失败: {e}")
 
-        # 构建 Tab 卡片并发送
+        # 构建优先级分区卡片并发送
         try:
-            card = self._build_tab_card(items, batch_label)
+            card = self._build_priority_card(items, batch_label)
             await self._send_card(token, card)
             return True
         except Exception as e:
-            print(f"  ✗ 发送 Tab 卡片失败: {e}")
+            print(f"  ✗ 发送卡片失败: {e}")
             return False
 
     async def send_alert(self, stage: str, error: str) -> bool:
