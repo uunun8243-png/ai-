@@ -32,6 +32,12 @@ class FeishuNotifier:
         self.app_secret = fc.get("app_secret", "")
         self.chat_id = fc.get("chat_id", "")
 
+    @staticmethod
+    def _sort_by_priority(items: List[NewsItem]) -> List[NewsItem]:
+        """按优先级排序：高 → 中 → 低，同级保持原顺序。"""
+        order = {"高": 0, "中": 1, "低": 2}
+        return sorted(items, key=lambda x: order.get(_infer_importance(x.analysis or {}), 3))
+
     async def _get_tenant_token(self) -> str:
         """获取飞书 tenant_access_token。"""
         async with httpx.AsyncClient() as client:

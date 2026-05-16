@@ -118,3 +118,35 @@ async def test_cleanup_returns_false_on_api_error():
     # 没有有效 token，httpx 请求会失败，但不应崩溃
     result = await notifier._cleanup_old_messages("")
     assert result is False
+
+
+def test_sort_by_priority():
+    items = [
+        NewsItem(title="低优先级", url="https://a.com", source="A", published=datetime.now(timezone.utc), summary="",
+                 analysis={"action": "了解即可"}),
+        NewsItem(title="高优先级", url="https://b.com", source="B", published=datetime.now(timezone.utc), summary="",
+                 analysis={"action": "精读原文"}),
+        NewsItem(title="中优先级", url="https://c.com", source="C", published=datetime.now(timezone.utc), summary="",
+                 analysis={"action": "收藏"}),
+    ]
+    sorted_items = FeishuNotifier._sort_by_priority(items)
+    # 按高 → 中 → 低排序
+    actions = [item.analysis["action"] for item in sorted_items]
+    assert actions == ["精读原文", "收藏", "了解即可"]
+
+
+def test_sort_by_priority_within_same_level():
+    """同优先级保持原始顺序。"""
+    items = [
+        NewsItem(title="A", url="https://a.com", source="A", published=datetime.now(timezone.utc), summary="",
+                 analysis={"action": "精读原文"}),
+        NewsItem(title="B", url="https://b.com", source="B", published=datetime.now(timezone.utc), summary="",
+                 analysis={"action": "动手实践"}),
+    ]
+    sorted_items = FeishuNotifier._sort_by_priority(items)
+    titles = [item.title for item in sorted_items]
+    assert titles == ["A", "B"]
+
+
+def test_sort_by_priority_empty():
+    assert FeishuNotifier._sort_by_priority([]) == []
