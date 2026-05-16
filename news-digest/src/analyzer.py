@@ -74,6 +74,12 @@ class Analyzer:
                 resp.raise_for_status()
                 data = resp.json()
                 content = data["choices"][0]["message"]["content"]
+                usage = data.get("usage", {})
+                item.analysis_usage = {
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "completion_tokens": usage.get("completion_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                }
                 return json.loads(content)
         except Exception as e:
             print(f"  ⚠ DeepSeek API 分析失败: {e}")
@@ -81,7 +87,17 @@ class Analyzer:
 
     async def analyze_batch(self, items: List[NewsItem]) -> List[NewsItem]:
         """批量分析新闻，将分析结果附加到每条新闻。"""
+        total_prompt = 0
+        total_completion = 0
         for item in items:
             analysis = await self.analyze(item)
             item.analysis = analysis
+            usage = getattr(item, "analysis_usage", {})
+            total_prompt += usage.get("prompt_tokens", 0)
+            total_completion += usage.get("completion_tokens", 0)
+
+        print(f"  Token 消耗: prompt {total_prompt} + completion {total_completion} = {total_prompt + total_completion} tokens")
+        if total_prompt + total_completion > 0 and items:
+            avg = (total_prompt + total_completion) / len(items)
+            print(f"  平均 {avg:.0f} tokens/条")
         return items
