@@ -3,11 +3,11 @@ name: AI News Daily Digest
 
 on:
   schedule:
-    # 北京时间 08:00 = UTC 00:00
+    # Beijing time 08:00 = UTC 00:00
     - cron: '0 0 * * *'
-    # 北京时间 14:00 = UTC 06:00
+    # Beijing time 14:00 = UTC 06:00
     - cron: '0 6 * * *'
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:  # Allow manual runs
 
 jobs:
   digest:
@@ -26,21 +26,37 @@ jobs:
         run: pip install -r requirements.txt
         working-directory: news-digest
 
+      - name: Restore sent-state cache
+        uses: actions/cache/restore@v4
+        with:
+          path: news-digest/.digest-state
+          key: digest-sent-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            digest-sent-state-
+
       - name: Determine batch
         id: batch
         run: |
           HOUR=$(date -u +%H)
           if [ "$HOUR" = "0" ]; then
-            echo "batch=上午" >> $GITHUB_OUTPUT
+            echo "batch=morning" >> $GITHUB_OUTPUT
           else
-            echo "batch=下午" >> $GITHUB_OUTPUT
+            echo "batch=afternoon" >> $GITHUB_OUTPUT
           fi
 
       - name: Run digest pipeline
         env:
+          DIGEST_BATCH: ${{ steps.batch.outputs.batch }}
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
           FEISHU_CHAT_ID: ${{ secrets.FEISHU_CHAT_ID }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: python -m src.main
         working-directory: news-digest
+
+      - name: Save sent-state cache
+        if: always() && hashFiles('news-digest/.digest-state/**') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: news-digest/.digest-state
+          key: digest-sent-state-${{ github.run_id }}-${{ github.run_attempt }}

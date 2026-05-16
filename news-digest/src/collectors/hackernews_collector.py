@@ -1,4 +1,5 @@
 import httpx
+import re
 from datetime import datetime, timezone
 from typing import List
 from src.models import NewsItem
@@ -30,7 +31,8 @@ class HackerNewsCollector(BaseCollector):
                 keywords = ["ai", "llm", "gpt", "claude", "machine learning",
                            "neural", "deep learning", "openai", "anthropic",
                            "gemini", "transformer", "rag", "agent"]
-                if not any(k in title.lower() for k in keywords):
+                title_lower = title.lower()
+                if not any(re.search(rf"(?<![a-z0-9]){re.escape(k)}(?![a-z0-9])", title_lower) for k in keywords):
                     continue
                 items.append(NewsItem(
                     title=title,

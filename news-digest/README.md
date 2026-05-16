@@ -4,10 +4,12 @@
 
 ## 功能
 
-- 自动采集 9 个数据源：Arxiv、GitHub Trending、Hacker News、OpenAI/Anthropic/Google AI Blog、Reddit、机器之心、量子位
-- 去重排序，每日精选 10+ 条核心新闻
+- 自动采集 14 个数据源：OpenAI/Anthropic/Google DeepMind/Meta AI/Google AI Blog、Arxiv、Hugging Face、Hacker News、GitHub Trending、VentureBeat AI、TechCrunch AI、Reddit、机器之心、量子位
+- AI 相关性过滤：自动识别并过滤与 AI 无关的新闻，确保推送内容聚焦 AI 领域
+- 来源多样化排序：综合来源权威度、时效性、热度、AI 关键词匹配度四维评分，轮询去重避免单一来源霸榜
+- 已发送状态追踪：自动记录已推送新闻，避免重复推送
 - DeepSeek API 按 11 维度框架逐条深度分析
-- 飞书群机器人推送，上午/下午两批发送
+- 飞书群机器人推送，上午/下午各 15 条
 
 ## 快速开始
 
@@ -61,6 +63,16 @@ python -m src.main
 
 编辑 `config.yaml` 可调整数据源开关、分析数量等。
 
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `analysis.max_news_per_day` | int | `15` | 每日最终推送的新闻数量 |
+| `analysis.candidate_pool_size` | int | `45` | 候选池大小，先选出候选再精选 |
+| `analysis.max_news_per_source` | int | `3` | 每个来源最多入选条数，避免单一来源霸榜 |
+| `analysis.recent_hours` | int | `24` | 只选取最近 N 小时内的新闻 |
+| `analysis.require_ai_relevance` | bool | `true` | 是否开启 AI 相关性过滤 |
+| `analysis.output_language` | str | `"zh-CN"` | 分析输出语言 |
+| `analysis.sent_state_path` | str | `".digest-state/sent_items.json"` | 已发送记录文件路径 |
+
 ## 项目结构
 
 ```
@@ -69,7 +81,8 @@ news-digest/
 ├── src/
 │   ├── main.py           # 入口与流水线编排
 │   ├── models.py         # NewsItem 数据模型
-│   ├── aggregator.py     # 去重/排序/分批
+│   ├── aggregator.py     # AI 过滤/去重/四维排序/分批
+│   ├── sent_state.py     # 已发送追踪，防止重复推送
 │   ├── analyzer.py       # DeepSeek API 分析
 │   ├── collectors/       # 各数据源采集器
 │   └── notifiers/        # 飞书推送
