@@ -87,17 +87,17 @@ class Analyzer:
 
     async def analyze_batch(self, items: List[NewsItem]) -> List[NewsItem]:
         """批量分析新闻，将分析结果附加到每条新闻。"""
-        total_prompt = 0
-        total_completion = 0
+        self.total_prompt = 0
+        self.total_completion = 0
         for item in items:
             analysis = await self.analyze(item)
             item.analysis = analysis
             usage = getattr(item, "analysis_usage", {})
-            total_prompt += usage.get("prompt_tokens", 0)
-            total_completion += usage.get("completion_tokens", 0)
+            self.total_prompt += usage.get("prompt_tokens", 0)
+            self.total_completion += usage.get("completion_tokens", 0)
 
-        print(f"  Token 消耗: prompt {total_prompt} + completion {total_completion} = {total_prompt + total_completion} tokens")
-        if total_prompt + total_completion > 0 and items:
-            avg = (total_prompt + total_completion) / len(items)
+        print(f"  Token 消耗: prompt {self.total_prompt} + completion {self.total_completion} = {self.total_prompt + self.total_completion} tokens")
+        if self.total_prompt + self.total_completion > 0 and items:
+            avg = (self.total_prompt + self.total_completion) / len(items)
             print(f"  平均 {avg:.0f} tokens/条")
         return items

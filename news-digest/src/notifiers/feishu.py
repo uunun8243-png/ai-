@@ -38,7 +38,7 @@ class FeishuNotifier:
         order = {"高": 0, "中": 1, "低": 2}
         return sorted(items, key=lambda x: order.get(_infer_importance(x.analysis or {}), 3))
 
-    def _build_priority_card(self, items: List[NewsItem], batch_label: str) -> dict:
+    def _build_priority_card(self, items: List[NewsItem], batch_label: str, token_summary: str = "") -> dict:
         """将多条新闻构建为一张按优先级分区的飞书消息卡片。
 
         卡片结构：
@@ -163,6 +163,12 @@ class FeishuNotifier:
             },
             "elements": elements,
         }
+        if token_summary:
+            card["elements"].append({"tag": "hr"})
+            card["elements"].append({
+                "tag": "div",
+                "text": {"tag": "lark_md", "content": f"⚡ Token: {token_summary}"},
+            })
         return card
 
     async def _get_tenant_token(self) -> str:
@@ -390,7 +396,7 @@ class FeishuNotifier:
 
         return True
 
-    async def send_news(self, items: List[NewsItem], batch_label: str = "上午") -> bool:
+    async def send_news(self, items: List[NewsItem], batch_label: str = "上午", token_summary: str = "") -> bool:
         """将一批新闻以 Tab 卡片形式发送到飞书群（只发 1 条消息）。"""
         if not self.app_id or not self.app_secret or not self.chat_id:
             print("飞书 API 配置不完整（需要 app_id, app_secret, chat_id）")
@@ -410,7 +416,7 @@ class FeishuNotifier:
 
         # 构建优先级分区卡片并发送
         try:
-            card = self._build_priority_card(items, batch_label)
+            card = self._build_priority_card(items, batch_label, token_summary)
             await self._send_card(token, card)
             return True
         except Exception as e:
