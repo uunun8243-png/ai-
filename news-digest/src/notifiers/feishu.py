@@ -42,10 +42,9 @@ class FeishuNotifier:
         """将多条新闻构建为一张按优先级分区的飞书消息卡片。
 
         卡片结构：
-          顶部：📋 简报 — 所有标题 + 优先级标签 + one_liner 一览
-          中部：🔴 高(N) — 高优先级新闻完整分析
-          中部：🟡 中(N) — 中优先级新闻完整分析
-          底部：🔵 低(N) — 低优先级新闻完整分析
+          🔴/🟡/🔵 高/中/低 — 每个分区包含文章的完整分析
+          标题行格式：{badge} [{action}] {title} — {one_liner}
+          每个条目含背景/核心分析/为什么重要/学习价值/应用实例等字段
         """
         valid = [it for it in items if it.analysis]
         sorted_items = self._sort_by_priority(valid)
