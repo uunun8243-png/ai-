@@ -81,7 +81,7 @@ class FeishuNotifier:
                 a = it.analysis or {}
                 elements.append({
                     "tag": "div",
-                    "text": {"tag": "lark_md", "content": f"**{it.title}**\n{a.get('category', '')} · {it.source}"},
+                    "text": {"tag": "lark_md", "content": f"**{it.title}**\n{a.get('category', '')} · {it.source}\n{a.get('one_liner', '')}"},
                 })
                 elements.append({"tag": "hr"})
 
