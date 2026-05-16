@@ -386,7 +386,7 @@ class FeishuNotifier:
         return True
 
     async def send_news(self, items: List[NewsItem], batch_label: str = "上午") -> bool:
-        """逐条发送新闻卡片到飞书群。"""
+        """将一批新闻以 Tab 卡片形式发送到飞书群（只发 1 条消息）。"""
         if not self.app_id or not self.app_secret or not self.chat_id:
             print("飞书 API 配置不完整（需要 app_id, app_secret, chat_id）")
             return False
@@ -398,23 +398,19 @@ class FeishuNotifier:
             return False
 
         # 清理 3 天前的旧卡片
-        await self._cleanup_old_messages(token)
+        try:
+            await self._cleanup_old_messages(token)
+        except Exception as e:
+            print(f"  ⚠ 清理旧消息失败: {e}")
 
-        total = len(items)
-        success_count = 0
-
-        for i, item in enumerate(items, 1):
-            if not item.analysis:
-                continue
-
-            card = self._build_card(item, i, total)
-            try:
-                await self._send_card(token, card)
-                success_count += 1
-            except Exception as e:
-                print(f"  ⚠ 推送第 {i} 条失败: {e}")
-
-        return success_count > 0
+        # 构建 Tab 卡片并发送
+        try:
+            card = self._build_tab_card(items, batch_label)
+            await self._send_card(token, card)
+            return True
+        except Exception as e:
+            print(f"  ✗ 发送 Tab 卡片失败: {e}")
+            return False
 
     async def send_alert(self, stage: str, error: str) -> bool:
         """发送失败告警卡片到飞书群。"""

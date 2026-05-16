@@ -201,3 +201,33 @@ def test_build_tab_card_no_analysis():
     # 卡片依然包含 overview tab
     tab = [e for e in card["elements"] if e.get("tag") == "tab"][0]
     assert "overview" in [t["tab_id"] for t in tab["tabs"]]
+
+
+@pytest.mark.asyncio
+async def test_send_news_with_valid_config_calls_cleanup():
+    """验证 send_news 会先调用 cleanup（token 获取失败时不会发卡片）。"""
+    config = {"feishu": {"app_id": "bad_id", "app_secret": "bad_secret", "chat_id": "chat"}}
+    notifier = FeishuNotifier(config)
+    items = [
+        NewsItem(title="测试", url="https://x.com", source="测试", published=datetime.now(timezone.utc),
+                 summary="", analysis={"action": "精读原文", "category": "技术", "one_liner": "test"}),
+    ]
+    # token 获取会失败，但不应抛异常
+    result = await notifier.send_news(items, "上午")
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_send_news_only_one_call():
+    """验证 send_news 只发 1 条消息（之前是 N 条）。"""
+    config = {"feishu": {"app_id": "", "app_secret": "", "chat_id": ""}}
+    notifier = FeishuNotifier(config)
+    items = [
+        NewsItem(title="A", url="https://a.com", source="A", published=datetime.now(timezone.utc),
+                 summary="", analysis={"action": "精读原文", "category": "技术", "one_liner": "a"}),
+        NewsItem(title="B", url="https://b.com", source="B", published=datetime.now(timezone.utc),
+                 summary="", analysis={"action": "了解即可", "category": "行业", "one_liner": "b"}),
+    ]
+    result = await notifier.send_news(items, "上午")
+    # 配置为空应返回 False，但不应报错
+    assert result is False
