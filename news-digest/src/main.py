@@ -2,6 +2,7 @@
 import asyncio
 import os
 import yaml
+from dotenv import load_dotenv
 from pathlib import Path
 from typing import List
 from src.models import NewsItem
@@ -17,6 +18,7 @@ from src.notifiers.feishu import FeishuNotifier
 
 
 def load_config() -> dict:
+    load_dotenv()
     config_path = Path(__file__).parent.parent / "config.yaml"
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
@@ -64,41 +66,62 @@ async def run_pipeline(batch: str = "上午"):
     print(f"=== AI 日报 {batch}场 ===")
 
     config = load_config()
+    notifier = FeishuNotifier(config)
 
     # 1. 采集
     print("\n📡 采集阶段...")
-    collectors = get_collectors(config)
-    all_items = await collect_all(collectors)
-    print(f"  共采集 {len(all_items)} 条原始新闻")
+    try:
+        collectors = get_collectors(config)
+        all_items = await collect_all(collectors)
+        print(f"  共采集 {len(all_items)} 条原始新闻")
+    except Exception as e:
+        print(f"  ✗ 采集阶段失败: {e}")
+        await notifier.send_alert("采集阶段", str(e))
+        return
 
     # 2. 聚合
     print("\n🔗 聚合阶段...")
-    aggregator = Aggregator(config)
-    processed = aggregator.process(all_items)
-    morning, afternoon = aggregator.split_batches(processed)
+    try:
+        aggregator = Aggregator(config)
+        processed = aggregator.process(all_items)
+        morning, afternoon = aggregator.split_batches(processed)
 
-    if batch == "上午":
-        batch_items = morning
-    else:
-        batch_items = afternoon
+        if batch == "上午":
+            batch_items = morning
+        else:
+            batch_items = afternoon
 
-    if not batch_items:
-        print(f"  本次无新闻推送")
+        if not batch_items:
+            print(f"  本次无新闻推送")
+            return
+
+        print(f"  处理后 {len(batch_items)} 条")
+    except Exception as e:
+        print(f"  ✗ 聚合阶段失败: {e}")
+        await notifier.send_alert("聚合阶段", str(e))
         return
-
-    print(f"  处理后 {len(batch_items)} 条")
 
     # 3. 分析
     print("\n🔍 分析阶段...")
-    analyzer = Analyzer(config)
-    batch_items = await analyzer.analyze_batch(batch_items)
-    print(f"  完成 {len(batch_items)} 条分析")
+    try:
+        analyzer = Analyzer(config)
+        batch_items = await analyzer.analyze_batch(batch_items)
+        print(f"  完成 {len(batch_items)} 条分析")
+    except Exception as e:
+        print(f"  ✗ 分析阶段失败: {e}")
+        await notifier.send_alert("分析阶段", str(e))
+        return
 
     # 4. 推送
     print("\n📤 推送阶段...")
-    notifier = FeishuNotifier(config)
-    success = await notifier.send_news(batch_items, batch)
-    print(f"  {'✓ 推送成功' if success else '✗ 推送失败'}")
+    try:
+        success = await notifier.send_news(batch_items, batch)
+        print(f"  {'✓ 推送成功' if success else '✗ 推送失败'}")
+        if not success:
+            await notifier.send_alert("推送阶段", "推送返回失败状态")
+    except Exception as e:
+        print(f"  ✗ 推送阶段失败: {e}")
+        await notifier.send_alert("推送阶段", str(e))
 
 
 async def main():

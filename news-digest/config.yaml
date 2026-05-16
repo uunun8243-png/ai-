@@ -1,11 +1,11 @@
 feishu:
-  app_id: ""
-  app_secret: ""
-  chat_id: ""
+  app_id: "${FEISHU_APP_ID}"
+  app_secret: "${FEISHU_APP_SECRET}"
+  chat_id: "${FEISHU_CHAT_ID}"
 
 deepseek:
-  api_key: ""
-  model: "deepseek-chat"
+  api_key: "${DEEPSEEK_API_KEY}"
+  model: "deepseek-v4-flash"
 
 sources:
   arxiv: true

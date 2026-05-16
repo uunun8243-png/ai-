@@ -5,42 +5,26 @@ from typing import List
 from src.models import NewsItem
 
 
-ANALYSIS_PROMPT = """你是一个 AI 前沿新闻拆解助手。
+ANALYSIS_PROMPT = """你是一个 AI 技术导师，用户是 AI 领域的学习者。
 
-请对下面这条新闻进行深度分析，**严格按照 JSON 格式**输出，不要输出其他内容：
+请对下面这条新闻进行分析。**根据新闻类型（技术创新/行业趋势/政策法规/产品发布/研究突破/融资动态）调整分析角度，严格按照 JSON 格式输出**：
 
 ```json
 {{
-  "plain_explanation": "用3-5句大白话解释：谁做了什么，和普通人有什么关系",
-  "importance": "高|中|低",
-  "scope": "普通用户|开发者|AI产品经理|企业|创业者",
-  "credibility": "强|中|弱",
-  "trend_forming": "是|否|观察中",
-  "importance_reason": "为什么这条新闻值得关注",
-  "trend_name": "趋势名称",
-  "trend_explanation": "大白话解释趋势",
-  "trend_evidence": "为什么这条新闻能代表这个趋势",
-  "trend_duration": "短期热点|中期趋势|长期方向",
-  "ordinary_impact": "这条新闻和我有什么关系",
-  "ordinary_action": "我需要马上学习或使用吗",
-  "ordinary_affect": "它会影响我的学习、工作或信息获取方式吗",
-  "ordinary_focus": "我应该关注什么，不需要焦虑什么",
-  "pm_user_need": "它说明了什么用户需求",
-  "pm_pain_point": "它解决了什么痛点",
-  "pm_design_takeaway": "它的产品设计有什么值得学",
-  "pm_new_product": "它可能启发什么新产品",
-  "pm_portfolio": "有没有可以放进作品集的方向",
-  "noise_marketing": "这条新闻有没有营销成分",
-  "noise_exaggeration": "有没有被媒体夸大的地方",
-  "noise_unreliable": "哪些结论不能直接相信",
-  "noise_misunderstanding": "普通人最容易误解什么",
-  "action_type": "收藏|学习|试用|拆解|做demo|忽略",
-  "action_purpose": "行动目的",
-  "action_time": "预计耗时",
-  "action_output": "预期产出",
-  "conclusion": "一句话总结真正值得记住的点"
+  "category": "新闻类型：技术创新|行业趋势|政策法规|产品发布|研究突破|融资动态",
+  "one_liner": "用一句话说清楚发生了什么（谁+做了什么+关键数据）",
+  "background": "背景上下文：为什么会发生、之前行业是什么状态",
+  "core_analysis": "核心分析。根据新闻类型输出不同侧重点：\n- 技术创新/研究突破 → 核心技术解读（架构/方法/指标）\n- 行业趋势/融资动态 → 市场影响（规模/玩家/格局变化）\n- 政策法规 → 具体规定和影响范围\n- 产品发布 → 功能亮点和差异化",
+  "why_matters": "为什么这条新闻值得关注，对行业/技术/市场有什么影响",
+  "learning_value": "作为学习者能从中获得什么：值得关注的技术点、行业认知或新思路",
+  "action": "建议行动：收藏|精读原文|动手实践|关注后续|了解即可",
+  "trend": "趋势判断：短期热点|中期趋势|长期方向",
+  "quick_start": "如果是可上手的技术/工具：如何快速体验（仓库链接/API/命令）。如果是行业资讯/政策则写'无需上手'",
+  "insight": "一句话总结，最值得记住的一个点"
 }}
 ```
+
+内容要有实质，不空泛。假设读者有 AI 基础知识，想通过新闻加深技术理解和行业认知。
 
 新闻信息：
 标题：{title}
