@@ -41,7 +41,7 @@ Increase per-batch news from 10 to 15, add 5 new data sources (14 total), and re
 |-------------|---------|:------------:|
 | Official blogs | OpenAI, Anthropic, DeepMind, Meta AI, Hugging Face, Google AI | 2 |
 | Industry media | VentureBeat AI, TechCrunch AI | 4 |
-| Research/Code | Arxiv, GitHub Trending | 3 |
+| Research/Code | Arxiv, GitHub Trending | 4 |
 | Community/Aggregator | HN, Reddit, 机器之心, 量子位 | 2 |
 
 Default fallback: `max_news_per_source: 3` for unlisted sources.
