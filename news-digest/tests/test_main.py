@@ -10,8 +10,13 @@ def test_get_collectors_returns_all_types():
         }
     }
     collectors = get_collectors(config)
-    assert len(collectors) == 6
+    assert len(collectors) == 11
     names = [c.source_name for c in collectors]
     assert "Arxiv" in names
     assert "GitHub Trending" in names
     assert "Hacker News" in names
+    assert "Meta AI" in names
+    assert "Hugging Face" in names
+    assert "Google DeepMind" in names
+    assert "VentureBeat AI" in names
+    assert "TechCrunch AI" in names

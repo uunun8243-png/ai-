@@ -14,11 +14,36 @@ sources:
   blogs: true
   reddit_ml: true
   zh_sources: true
+  meta_ai: true
+  huggingface: true
+  deepmind: true
+  venturebeat: true
+  techcrunch: true
 
 schedule:
   time: "08:00"
   timezone: "Asia/Shanghai"
 
 analysis:
-  max_news_per_day: 10
+  max_news_per_day: 15
+  candidate_pool_size: 45
+  max_news_per_source: 3
+  source_limits:
+    OpenAI: 2
+    Anthropic: 2
+    Google DeepMind: 2
+    Meta AI: 2
+    Hugging Face: 2
+    Google AI: 2
+    Arxiv: 3
+    GitHub Trending: 3
+    Hacker News: 2
+    Reddit r/MachineLearning: 2
+    VentureBeat AI: 4
+    TechCrunch AI: 4
+    机器之心: 2
+    量子位: 2
+  recent_hours: 24
+  sent_state_path: ".digest-state/sent_items.json"
   output_language: "zh-CN"
+  require_ai_relevance: true

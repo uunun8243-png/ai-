@@ -2,6 +2,7 @@
 import asyncio
 import os
 import yaml
+from collections import Counter
 from dotenv import load_dotenv
 from pathlib import Path
 from typing import List
@@ -12,8 +13,14 @@ from src.collectors.hackernews_collector import HackerNewsCollector
 from src.collectors.blogs_collector import BlogsCollector
 from src.collectors.reddit_collector import RedditCollector
 from src.collectors.zh_sources_collector import ZhSourcesCollector
+from src.collectors.meta_ai_collector import MetaAICollector
+from src.collectors.huggingface_collector import HuggingFaceCollector
+from src.collectors.deepmind_collector import DeepMindCollector
+from src.collectors.venturebeat_collector import VentureBeatCollector
+from src.collectors.techcrunch_collector import TechCrunchCollector
 from src.aggregator import Aggregator
 from src.analyzer import Analyzer
+from src.sent_state import SentState
 from src.notifiers.feishu import FeishuNotifier
 
 
@@ -45,6 +52,11 @@ def get_collectors(config: dict) -> list:
         BlogsCollector(config),
         RedditCollector(config),
         ZhSourcesCollector(config),
+        MetaAICollector(config),
+        HuggingFaceCollector(config),
+        DeepMindCollector(config),
+        VentureBeatCollector(config),
+        TechCrunchCollector(config),
     ]
 
 
@@ -83,19 +95,29 @@ async def run_pipeline(batch: str = "上午"):
     print("\n🔗 聚合阶段...")
     try:
         aggregator = Aggregator(config)
-        processed = aggregator.process(all_items)
-        morning, afternoon = aggregator.split_batches(processed)
+        sent_state = SentState.from_config(config)
+        analysis_config = config.get("analysis", {})
+        candidate_limit = analysis_config.get(
+            "candidate_pool_size", aggregator.max_per_day * 3
+        )
+        processed = aggregator.process(all_items, limit=candidate_limit)
+        before_sent_filter = len(processed)
+        processed = sent_state.filter_unsent(processed)
+        if before_sent_filter != len(processed):
+            print(f"  Sent-state filtered {before_sent_filter - len(processed)} items")
 
-        if batch == "上午":
-            batch_items = morning
-        else:
-            batch_items = afternoon
+        batch_items = processed[:aggregator.max_per_day]
 
         if not batch_items:
             print(f"  本次无新闻推送")
             return
 
+        source_counts = Counter(item.source for item in batch_items)
+        source_summary = ", ".join(
+            f"{source}: {count}" for source, count in source_counts.items()
+        )
         print(f"  处理后 {len(batch_items)} 条")
+        print(f"  来源分布: {source_summary}")
     except Exception as e:
         print(f"  ✗ 聚合阶段失败: {e}")
         await notifier.send_alert("聚合阶段", str(e))
@@ -116,6 +138,8 @@ async def run_pipeline(batch: str = "上午"):
     print("\n📤 推送阶段...")
     try:
         success = await notifier.send_news(batch_items, batch)
+        if success:
+            sent_state.mark_sent(batch_items)
         print(f"  {'✓ 推送成功' if success else '✗ 推送失败'}")
         if not success:
             await notifier.send_alert("推送阶段", "推送返回失败状态")
@@ -127,6 +151,15 @@ async def run_pipeline(batch: str = "上午"):
 async def main():
     """入口函数。根据当前时间决定推送哪一批。"""
     from datetime import datetime
+
+    batch_from_env = os.getenv("DIGEST_BATCH", "").strip().lower()
+    if batch_from_env in {"morning", "上午"}:
+        await run_pipeline("上午")
+        return
+    if batch_from_env in {"afternoon", "下午"}:
+        await run_pipeline("下午")
+        return
+
     hour = datetime.now().hour
     batch = "下午" if hour >= 12 else "上午"
     await run_pipeline(batch)
