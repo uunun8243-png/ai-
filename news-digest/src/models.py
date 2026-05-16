@@ -14,4 +14,4 @@ class NewsItem:
     content: str = ""          # 原文正文（可选）
     category: str = ""         # 自动分类：大模型/开源/多模态/硬件/行业动态
     score: float = 0.0         # 热度评分，用于排序
-    analysis: Optional[dict] = field(default=None)  # 10 维度分析结果
+    analysis: Optional[dict] = field(default=None)  # 11 维度分析结果
