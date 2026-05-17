@@ -129,6 +129,7 @@ async def run_pipeline(batch: str = "上午"):
         analyzer = Analyzer(config)
         batch_items = await analyzer.analyze_batch(batch_items)
         print(f"  完成 {len(batch_items)} 条分析")
+        token_summary = f"prompt {analyzer.total_prompt} + completion {analyzer.total_completion} = {analyzer.total_prompt + analyzer.total_completion}"
     except Exception as e:
         print(f"  ✗ 分析阶段失败: {e}")
         await notifier.send_alert("分析阶段", str(e))
@@ -137,7 +138,7 @@ async def run_pipeline(batch: str = "上午"):
     # 4. 推送
     print("\n📤 推送阶段...")
     try:
-        success = await notifier.send_news(batch_items, batch)
+        success = await notifier.send_news(batch_items, batch, token_summary)
         if success:
             sent_state.mark_sent(batch_items)
         print(f"  {'✓ 推送成功' if success else '✗ 推送失败'}")
