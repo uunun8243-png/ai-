@@ -2,6 +2,7 @@
 import asyncio
 import os
 import yaml
+from datetime import datetime, timezone
 from collections import Counter
 from dotenv import load_dotenv
 from pathlib import Path
@@ -101,6 +102,25 @@ async def run_pipeline(batch: str = "上午"):
             "candidate_pool_size", aggregator.max_per_day * 3
         )
         processed = aggregator.process(all_items, limit=candidate_limit)
+
+        # DEBUG: print detailed score breakdown
+        if os.getenv("DEBUG_SCORE"):
+            print(f"\n  {'排名':>4} | {'来源':<20} | {'评分':<6} | {'src':<6} {'fresh':<6} {'norm':<6} {'kw':<6} {'rel':<6} {'burst':<6}")
+            print(f"  {'─'*4}─┼─{'─'*20}─┼─{'─'*6}─┼─{'─'*6}─{'─'*6}─{'─'*6}─{'─'*6}─{'─'*6}─{'─'*6}")
+            norms = aggregator._compute_norms(processed)
+            bursts = aggregator._burst_detect(processed)
+            for idx, item in enumerate(processed):
+                score = aggregator.ranking_score(item, norms, bursts, idx)
+                src_signal = aggregator.source_weights.get(item.source, 0.6) * 0.25
+                age_hours = max((datetime.now(timezone.utc) - item.published).total_seconds() / 3600, 0)
+                fresh_signal = max(0.0, 1 - (age_hours / max(aggregator.recent_hours, 1))) * 0.25
+                norm_signal = norms.get(idx, 0.6) * 0.20
+                kw_signal = aggregator.keyword_strength(item) * 0.15
+                rel_boost = aggregator._release_boost(item)
+                burst_boost = bursts.get(idx, 0.0)
+                print(f"  #{idx+1:<2} | {item.source:<20} | {score:.3f} | {src_signal:.3f} {fresh_signal:.3f} {norm_signal:.3f} {kw_signal:.3f} {rel_boost:.3f} {burst_boost:.3f}")
+            print()
+
         before_sent_filter = len(processed)
         processed = sent_state.filter_unsent(processed)
         if before_sent_filter != len(processed):
@@ -129,6 +149,17 @@ async def run_pipeline(batch: str = "上午"):
         analyzer = Analyzer(config)
         batch_items = await analyzer.analyze_batch(batch_items)
         print(f"  完成 {len(batch_items)} 条分析")
+
+        # 过滤分析失败的条目
+        before_filter = len(batch_items)
+        batch_items = [it for it in batch_items if it.analysis and "error" not in it.analysis]
+        skipped = before_filter - len(batch_items)
+        if skipped:
+            print(f"  ⚠ 过滤 {skipped} 条分析失败的新闻")
+        if not batch_items:
+            print(f"  所有分析均失败，终止推送")
+            return
+
         token_summary = f"prompt {analyzer.total_prompt} + completion {analyzer.total_completion} = {analyzer.total_prompt + analyzer.total_completion}"
     except Exception as e:
         print(f"  ✗ 分析阶段失败: {e}")

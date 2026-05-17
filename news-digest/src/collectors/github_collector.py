@@ -1,3 +1,4 @@
+import os
 import httpx
 from datetime import datetime, timezone, timedelta
 from typing import List
@@ -14,17 +15,21 @@ class GitHubTrendingCollector(BaseCollector):
             return []
 
         url = "https://api.github.com/search/repositories"
-        params = {
-            "q": "created:>={date} (topic:ai OR topic:llm OR topic:machine-learning)",
-            "sort": "stars",
-            "per_page": 10,
-        }
-        # 用过去 7 天的日期
         date = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
-        params["q"] = params["q"].format(date=date)
+        # 搜索最近7天创建、有AI关键词且star>50的仓库
+        params = {
+            "q": f"created:>={date} stars:>1000 (topic:ai OR topic:llm OR topic:machine-learning OR ai OR llm OR generative NOT react NOT vue NOT tailwind NOT remix)",
+            "sort": "stars",
+            "per_page": 15,
+        }
+
+        headers = {}
+        token = os.getenv("GITHUB_TOKEN", "")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
 
         async with httpx.AsyncClient() as client:
-            resp = await client.get(url, params=params)
+            resp = await client.get(url, params=params, headers=headers)
             resp.raise_for_status()
             data = resp.json()
 
