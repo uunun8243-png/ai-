@@ -16,9 +16,9 @@ class GitHubTrendingCollector(BaseCollector):
 
         url = "https://api.github.com/search/repositories"
         date = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
-        # 搜索最近7天创建、有AI关键词且star>50的仓库
+        # 搜索最近7天创建、有AI关键词且star>1000的仓库
         params = {
-            "q": f"created:>={date} stars:>1000 (topic:ai OR topic:llm OR topic:machine-learning OR ai OR llm OR generative NOT react NOT vue NOT tailwind NOT remix)",
+            "q": f"created:>={date} stars:>1000 (ai OR llm OR generative OR topic:ai OR topic:llm OR topic:machine-learning)",
             "sort": "stars",
             "per_page": 15,
         }
