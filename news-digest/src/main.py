@@ -24,6 +24,8 @@ from src.collectors.techcrunch_collector import TechCrunchCollector
 from src.aggregator import Aggregator
 from src.analyzer import Analyzer
 from src.sent_state import SentState
+from src.collectors.monetization_collector import ProductHuntCollector, IndieHackersCollector, RedditSideProjectCollector
+from src.monetization_analyzer import MonetizationAnalyzer
 from src.notifiers.feishu import FeishuNotifier
 
 
@@ -77,6 +79,17 @@ def get_collectors(config: dict) -> list:
     ]
 
 
+def get_monetization_collectors(config: dict) -> list:
+    mc = config.get("monetization", {})
+    if not mc.get("enabled", True):
+        return []
+    return [
+        ProductHuntCollector(config),
+        IndieHackersCollector(config),
+        RedditSideProjectCollector(config),
+    ]
+
+
 async def collect_all(collectors: list) -> Tuple[List[NewsItem], Dict[str, int]]:
     """从所有采集器获取新闻。返回 (items, source_counts)。"""
     all_items = []
@@ -91,6 +104,20 @@ async def collect_all(collectors: list) -> Tuple[List[NewsItem], Dict[str, int]]
             source_counts[collector.source_name] = 0
             print(f"  ✗ {collector.source_name}: {e}")
     return all_items, source_counts
+
+
+async def collect_monetization(collectors: list) -> list:
+    """从所有变现项目采集器获取数据。"""
+    from src.models import NewsItem
+    all_items = []
+    for collector in collectors:
+        try:
+            items = await collector.fetch()
+            all_items.extend(items)
+            print(f"  ✓ {collector.source_name}: {len(items)} 条")
+        except Exception as e:
+            print(f"  ✗ {collector.source_name}: {e}")
+    return all_items
 
 
 async def run_pipeline(batch: str = "上午"):
@@ -257,6 +284,71 @@ async def run_pipeline(batch: str = "上午"):
         push_status = f"error: {e}"
         print(f"  ✗ 推送阶段失败: {e}")
         await notifier.send_alert("推送阶段", str(e))
+
+    # 5. 变现项目（独立流水线，失败不阻塞主流程）
+    print("\n💰 变现项目阶段...")
+    monetization_push_status = "skipped"
+    try:
+        mon_config = config.get("monetization", {})
+        if mon_config.get("enabled", True):
+            mon_collectors = get_monetization_collectors(config)
+            if mon_collectors:
+                mon_items = await collect_monetization(mon_collectors)
+                print(f"  共采集 {len(mon_items)} 条变现项目")
+
+                if mon_items:
+                    mon_sent_state = SentState(
+                        Path(__file__).resolve().parent.parent / mon_config.get(
+                            "sent_state_path", ".digest-state/monetization_sent_items.json"
+                        )
+                    )
+
+                    # 简化评分排序
+                    from datetime import datetime, timezone
+                    import math
+
+                    source_weights = mon_config.get("source_weights", {})
+                    now = datetime.now(timezone.utc)
+
+                    def monetization_score(item) -> float:
+                        sw = source_weights.get(item.source, 0.5)
+                        age_hours = max((now - item.published).total_seconds() / 3600, 0)
+                        freshness = math.exp(-age_hours / 24)
+                        heat = min(item.score / 100, 1.0) if item.score > 0 else 0.3
+                        return sw + freshness + heat
+
+                    mon_items.sort(key=monetization_score, reverse=True)
+
+                    # 去重
+                    fresh = mon_sent_state.filter_unsent(mon_items)
+                    print(f"  去重过滤 {len(mon_items) - len(fresh)} 条")
+                    mon_items = fresh[:mon_config.get("max_per_day", 3)]
+
+                    if mon_items:
+                        # 分析
+                        mon_analyzer = MonetizationAnalyzer(config)
+                        mon_items = await mon_analyzer.analyze_batch(mon_items)
+
+                        # 过滤分析失败的
+                        mon_items = [it for it in mon_items if it.analysis and "error" not in it.analysis]
+
+                        if mon_items:
+                            success = await notifier.send_monetization(mon_items, batch)
+                            if success:
+                                mon_sent_state.mark_sent(mon_items)
+                            monetization_push_status = "success" if success else "failed"
+                            print(f"  {'✓ 变现项目推送成功' if success else '✗ 变现项目推送失败'}")
+                        else:
+                            print("  分析后无有效变现项目，跳过推送")
+                    else:
+                        print("  去重后无新变现项目，跳过推送")
+            else:
+                print("  变现项目采集器未启用")
+        else:
+            print("  变现项目模块未启用")
+    except Exception as e:
+        monetization_push_status = f"error: {e}"
+        print(f"  ✗ 变现项目阶段失败: {e}")
 
     _write_run_log(config, aggregator, collection_counts, stage_counts,
                    ranking, sent_urls, final_urls, batch, push_status)
