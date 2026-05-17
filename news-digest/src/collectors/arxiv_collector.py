@@ -44,6 +44,9 @@ class ArxivCollector(BaseCollector):
             if published.tzinfo is None:
                 published = published.replace(tzinfo=timezone.utc)
 
+            hours_ago = (datetime.now(timezone.utc) - published).total_seconds() / 3600
+            temporal_score = max(0, round(1 - hours_ago / 72, 2)) * 100
+
             cat_items.append(NewsItem(
                 title=result.title,
                 url=result.entry_id,
@@ -51,6 +54,7 @@ class ArxivCollector(BaseCollector):
                 published=published,
                 summary=result.summary[:500],
                 category=self._categorize(category),
+                score=temporal_score,
             ))
 
         return cat_items

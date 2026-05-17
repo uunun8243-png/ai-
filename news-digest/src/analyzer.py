@@ -1,5 +1,7 @@
 # news-digest/src/analyzer.py
 import json
+import os
+import re
 import httpx
 from typing import List
 from src.models import NewsItem
@@ -80,7 +82,23 @@ class Analyzer:
                     "completion_tokens": usage.get("completion_tokens", 0),
                     "total_tokens": usage.get("total_tokens", 0),
                 }
+                content = content.strip()
+                if content.startswith("```"):
+                    content = content.strip("`")
+                    content = content.removeprefix("json").removeprefix("JSON").strip()
+                content = content.strip()
                 return json.loads(content)
+        except json.JSONDecodeError as e:
+            print(f"  ⚠ DeepSeek API 响应解析失败: {e}")
+            if os.getenv("DEBUG_SCORE"):
+                print(f"  └─ 原始响应前 500 字符: {content[:500]}")
+            # 尝试修复常见问题后重试
+            try:
+                import re
+                fixed = re.sub(r',\s*([}\]])', r'\1', content)
+                return json.loads(fixed)
+            except Exception:
+                return {"error": f"分析失败: JSON 解析错误"}
         except Exception as e:
             print(f"  ⚠ DeepSeek API 分析失败: {e}")
             return {"error": f"分析失败: {str(e)}"}
