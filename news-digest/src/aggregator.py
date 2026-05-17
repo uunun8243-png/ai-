@@ -1,4 +1,5 @@
 # news-digest/src/aggregator.py
+import math
 from datetime import datetime, timezone, timedelta
 from typing import List, Tuple, Optional
 import re
@@ -48,6 +49,25 @@ class Aggregator:
         "训练",
     )
 
+    ACADEMIC_KEYWORDS = (
+        # 架构类
+        "transformer", "diffusion model", "Mamba", "SSM", "state space model",
+        "MoE", "mixture of experts", "attention mechanism", "encoder-decoder",
+        "autoregressive", "graph neural network", "normalization", "embedding",
+        "residual", "convolution", "self-attention", "cross-attention",
+        # 训练/优化
+        "fine-tuning", "RLHF", "DPO", "reinforcement learning from human feedback",
+        "distillation", "quantization", "pruning", "LoRA", "adapter",
+        "curriculum learning", "contrastive learning", "self-supervised",
+        # 推理/效率
+        "speculative decoding", "KV cache", "flash attention", "sparse",
+        "low-rank", "mixture", "efficient", "inference optimization",
+        "chain-of-thought", "CoT",
+        # 新方法信号
+        "novel", "state-of-the-art", "SOTA", "framework", "outperforms",
+        "first", "new architecture", "new method", "propose", "introduce",
+    )
+
     AI_SOURCES = {
         "Arxiv",
         "OpenAI",
@@ -77,12 +97,53 @@ class Aggregator:
         r"\b\d+\.\d+[A-Za-z]*\b",
     )
 
+    SOURCE_HALF_LIFE = {
+        # News media (6h)
+        "VentureBeat AI": 6,
+        "TechCrunch AI": 6,
+        "机器之心": 6,
+        "量子位": 6,
+        # Official (12h)
+        "OpenAI": 12,
+        "Anthropic": 12,
+        "Google DeepMind": 12,
+        "Meta AI": 12,
+        "Google AI": 12,
+        "Hugging Face": 12,
+        # Academic (48h)
+        "Arxiv": 48,
+        # Community (Mode B: engagement-driven)
+        "Hacker News": "engagement",
+        "Reddit r/MachineLearning": "engagement",
+        # GitHub Trending
+        "GitHub Trending": 48,
+    }
+
     def __init__(self, config: dict):
         analysis_config = config.get("analysis", {})
         self.max_per_day = analysis_config.get("max_news_per_day", 10)
         self.require_ai_relevance = analysis_config.get("require_ai_relevance", True)
         self.max_per_source = analysis_config.get("max_news_per_source", 3)
         self.recent_hours = analysis_config.get("recent_hours", 24)
+        self.source_recent_hours = analysis_config.get("source_recent_hours", {})
+
+        # Scoring configuration
+        self.scoring_config = config.get("scoring", {})
+        freshness_config = self.scoring_config.get("freshness", {})
+        self.half_life_community = freshness_config.get("half_life_community", 8)
+        self.engagement_window_hours = freshness_config.get("engagement_window_hours", 6)
+
+        weights_config = self.scoring_config.get("weights", {})
+        self.weight_source = weights_config.get("source", 0.15)
+        self.weight_timeliness = weights_config.get("timeliness", 0.30)
+        self.weight_norm = weights_config.get("norm", 0.15)
+        self.weight_keyword = weights_config.get("keyword", 0.15)
+
+        self.cross_source_boosts = self.scoring_config.get(
+            "cross_source_boosts",
+            {2: 0.05, 3: 0.10, 4: 0.15, 5: 0.20},
+        )
+
         self.source_weights = {
             "OpenAI": 1.0,
             "Anthropic": 1.0,
@@ -152,9 +213,11 @@ class Aggregator:
             return 0.15
         return 0.10
 
-    def _burst_detect(self, items: List[NewsItem]) -> dict[int, float]:
-        """Cluster items by title similarity; clusters with >=3 distinct
-        sources grant all members +0.10 burst boost."""
+    def _cross_source_boost(self, items: List[NewsItem]) -> dict[int, float]:
+        """Cluster items by title similarity; award stepped boosts based on
+        number of distinct sources covering the same story.
+        Boost values are read from self.cross_source_boosts config:
+          2 sources: +0.05, 3: +0.10, 4: +0.15, 5+: +0.20 (defaults)."""
         n = len(items)
         clustered: set[int] = set()
         clusters: list[tuple[set[int], set[str]]] = []
@@ -180,9 +243,19 @@ class Aggregator:
 
         result: dict[int, float] = {}
         for cluster, sources in clusters:
-            if len(sources) >= 3:
+            num_sources = len(sources)
+            boost = 0.0
+            if num_sources >= 5:
+                boost = self.cross_source_boosts.get(5, 0.20)
+            elif num_sources >= 4:
+                boost = self.cross_source_boosts.get(4, 0.15)
+            elif num_sources >= 3:
+                boost = self.cross_source_boosts.get(3, 0.10)
+            elif num_sources >= 2:
+                boost = self.cross_source_boosts.get(2, 0.05)
+            if boost > 0:
                 for idx in cluster:
-                    result[idx] = 0.10
+                    result[idx] = boost
         return result
 
     def is_ai_related(self, item: NewsItem) -> bool:
@@ -207,13 +280,13 @@ class Aggregator:
         return [item for item in items if self.is_ai_related(item)]
 
     def keyword_strength(self, item: NewsItem) -> float:
-        """Return a bounded AI keyword signal between 0 and 1."""
+        """Return a bounded AI + academic keyword signal between 0 and 1."""
         text = " ".join(
             part for part in [item.title, item.summary, item.category, item.source] if part
         ).lower()
 
         matches = 0
-        for keyword in self.AI_KEYWORDS:
+        for keyword in self.AI_KEYWORDS + self.ACADEMIC_KEYWORDS:
             keyword = keyword.lower()
             if re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", text):
                 matches += 1
@@ -237,11 +310,11 @@ class Aggregator:
         return unique
 
     def sort_by_score(self, items: List[NewsItem]) -> List[NewsItem]:
-        """Pre-compute norms and bursts, then sort by ranking_score."""
+        """Pre-compute norms and cross-source boosts, then sort by ranking_score."""
         norms = self._compute_norms(items)
-        bursts = self._burst_detect(items)
+        cross_boosts = self._cross_source_boost(items)
         scored = [
-            (self.ranking_score(item, norms, bursts, idx), item)
+            (self.ranking_score(item, norms, cross_boosts, idx), item)
             for idx, item in enumerate(items)
         ]
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -251,15 +324,27 @@ class Aggregator:
         self,
         item: NewsItem,
         norms: Optional[dict[int, float]] = None,
-        bursts: Optional[dict[int, float]] = None,
+        cross_boosts: Optional[dict[int, float]] = None,
         item_index: Optional[int] = None,
     ) -> float:
-        """Combine source, freshness, normalized score, keyword, release, and burst signals."""
+        """Combine source, timeliness (exponential half-life decay),
+        normalized score, keyword, release, and cross-source boost signals."""
         source_signal = self.source_weights.get(item.source, 0.6)
         age_hours = max(
             (datetime.now(timezone.utc) - item.published).total_seconds() / 3600, 0,
         )
-        freshness_signal = max(0.0, 1 - (age_hours / max(self.recent_hours, 1)))
+
+        # Exponential half-life freshness (Mode A: time decay, Mode B: engagement)
+        half_life = self.SOURCE_HALF_LIFE.get(item.source, 12)
+        if half_life == "engagement":
+            if age_hours <= self.engagement_window_hours:
+                timeliness = math.log(item.score + 1) * math.exp(-age_hours / 6.0)
+            elif age_hours <= self.recent_hours:
+                timeliness = math.exp(-age_hours / self.half_life_community)
+            else:
+                timeliness = 0.0
+        else:
+            timeliness = math.exp(-age_hours / half_life)
 
         norm_signal = 0.6
         if norms is not None and item_index is not None:
@@ -269,17 +354,17 @@ class Aggregator:
 
         release_boost = self._release_boost(item)
 
-        burst_boost = 0.0
-        if bursts is not None and item_index is not None:
-            burst_boost = bursts.get(item_index, 0.0)
+        cross_source_boost = 0.0
+        if cross_boosts is not None and item_index is not None:
+            cross_source_boost = cross_boosts.get(item_index, 0.0)
 
         return (
-            source_signal * 0.25
-            + freshness_signal * 0.25
-            + norm_signal * 0.20
-            + keyword_signal * 0.15
+            source_signal * self.weight_source
+            + timeliness * self.weight_timeliness
+            + norm_signal * self.weight_norm
+            + keyword_signal * self.weight_keyword
+            + cross_source_boost
             + release_boost
-            + burst_boost
         )
 
     def diversify_sources(self, items: List[NewsItem], limit: Optional[int] = None) -> List[NewsItem]:
@@ -318,10 +403,14 @@ class Aggregator:
         return selected
 
     def filter_recent(self, items: List[NewsItem], hours: Optional[int] = None) -> List[NewsItem]:
-        """只保留最近 N 小时内的新闻。"""
-        hours = self.recent_hours if hours is None else hours
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-        return [i for i in items if i.published >= cutoff]
+        """只保留最近 N 小时内的新闻。支持按源配置特定窗口。"""
+        now = datetime.now(timezone.utc)
+        return [
+            i for i in items
+            if i.published >= now - timedelta(
+                hours=self.source_recent_hours.get(i.source, hours if hours is not None else self.recent_hours)
+            )
+        ]
 
     def process(self, items: List[NewsItem], limit: Optional[int] = None) -> List[NewsItem]:
         """完整的处理流水线。"""
@@ -332,7 +421,7 @@ class Aggregator:
         return self.diversify_sources(items, limit=limit)
 
     def split_batches(self, items: List[NewsItem]) -> Tuple[List[NewsItem], List[NewsItem]]:
-        """拆分为上午和下午两批。上午最多 10 条，其余为下午。"""
-        morning = items[:10]
-        afternoon = items[10:] if len(items) > 10 else []
+        """拆分为上午和下午两批。上午最多 max_per_day 条，其余为下午。"""
+        morning = items[:self.max_per_day]
+        afternoon = items[self.max_per_day:] if len(items) > self.max_per_day else []
         return morning, afternoon

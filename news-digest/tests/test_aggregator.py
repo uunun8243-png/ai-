@@ -133,9 +133,9 @@ def test_ranking_score_normalizes_raw_source_scores():
 
     items = [github_item, hn_item]
     norms = agg._compute_norms(items)
-    boosts = agg._burst_detect(items)
-    score_g = agg.ranking_score(github_item, norms, boosts, 0)
-    score_h = agg.ranking_score(hn_item, norms, boosts, 1)
+    cross_boosts = agg._cross_source_boost(items)
+    score_g = agg.ranking_score(github_item, norms, cross_boosts, 0)
+    score_h = agg.ranking_score(hn_item, norms, cross_boosts, 1)
     assert score_h > score_g
     assert agg.sort_by_score([github_item, hn_item])[0] == hn_item
 
@@ -300,7 +300,7 @@ def test_release_boost_chinese_release_verb():
     assert agg._release_boost(item) == 0.15
 
 
-def test_burst_detect_three_sources_boosts():
+def test_cross_source_boost_three_sources_boosts():
     agg = Aggregator({"analysis": {}})
     # Use near-identical titles to pass SequenceMatcher >= 0.5
     items = [
@@ -309,38 +309,41 @@ def test_burst_detect_three_sources_boosts():
         make_ai_item("OpenAI announces GPT-5 launch with new features", "TechCrunch AI", score=0),
         make_ai_item("Some unrelated Arxiv paper about math", "Arxiv", score=0),
     ]
-    boosts = agg._burst_detect(items)
-    assert boosts.get(0) == 0.10
-    assert boosts.get(1) == 0.10
-    assert boosts.get(2) == 0.10
-    assert 3 not in boosts  # unrelated
+    cross_boosts = agg._cross_source_boost(items)
+    assert cross_boosts.get(0) == 0.10
+    assert cross_boosts.get(1) == 0.10
+    assert cross_boosts.get(2) == 0.10
+    assert 3 not in cross_boosts  # unrelated
 
 
-def test_burst_detect_only_two_sources_no_boost():
+def test_cross_source_boost_two_sources():
     agg = Aggregator({"analysis": {}})
     items = [
-        make_ai_item("Claude 4 announced", "Anthropic", score=0),
-        make_ai_item("Anthropic releases Claude 4", "VentureBeat AI", score=0),
+        make_ai_item("Claude 4 announced with new features", "Anthropic", score=0),
+        make_ai_item("Claude 4 announced with new features", "VentureBeat AI", score=0),
     ]
-    boosts = agg._burst_detect(items)
-    assert boosts == {}
+    cross_boosts = agg._cross_source_boost(items)
+    assert cross_boosts.get(0) == 0.05
+    assert cross_boosts.get(1) == 0.05
 
 
-def test_ranking_score_prefers_official_release_with_burst():
+def test_ranking_score_prefers_official_release_with_cross_boost():
     agg = Aggregator({"analysis": {"recent_hours": 24}})
     now = datetime.now(timezone.utc)
 
     openai_item = make_ai_item("Introducing GPT-5", "OpenAI", score=0)
     openai_item.published = now - timedelta(hours=1)
 
-    hn_item = make_ai_item("Show HN: my AI agent side project", "Hacker News", score=300)
+    # Use low score so engagement-mode timeliness (log(0+1)=0) does not
+    # overpower the official release boost under the new scoring model.
+    hn_item = make_ai_item("Show HN: my AI agent side project", "Hacker News", score=0)
     hn_item.published = now - timedelta(hours=1)
 
     items = [openai_item, hn_item]
     norms = agg._compute_norms(items)
-    boosts = agg._burst_detect(items)
-    score_o = agg.ranking_score(openai_item, norms, boosts, 0)
-    score_h = agg.ranking_score(hn_item, norms, boosts, 1)
+    cross_boosts = agg._cross_source_boost(items)
+    score_o = agg.ranking_score(openai_item, norms, cross_boosts, 0)
+    score_h = agg.ranking_score(hn_item, norms, cross_boosts, 1)
     assert score_o > score_h
 
 

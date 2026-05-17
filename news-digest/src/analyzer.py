@@ -38,7 +38,7 @@ ANALYSIS_PROMPT = """你是一个 AI 技术导师，用户是 AI 领域的学习
 
 
 class Analyzer:
-    """调用 DeepSeek API 对新闻进行 10 维度分析。"""
+    """调用 DeepSeek API 对新闻进行 11 维度分析。"""
 
     def __init__(self, config: dict):
         ds_config = config.get("deepseek", {})
@@ -47,7 +47,7 @@ class Analyzer:
         self.base_url = "https://api.deepseek.com/v1"
 
     async def analyze(self, item: NewsItem) -> dict:
-        """对单条新闻分析，返回 10 维度 JSON。"""
+        """对单条新闻分析，返回 11 维度 JSON。"""
         if not self.api_key:
             return {"error": "DeepSeek API key not configured"}
 

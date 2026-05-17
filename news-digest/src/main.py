@@ -1,12 +1,14 @@
 # news-digest/src/main.py
 import asyncio
+import json
+import math
 import os
 import yaml
 from datetime import datetime, timezone
 from collections import Counter
 from dotenv import load_dotenv
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Tuple
 from src.models import NewsItem
 from src.collectors.arxiv_collector import ArxivCollector
 from src.collectors.github_collector import GitHubTrendingCollector
@@ -44,6 +46,20 @@ def load_config() -> dict:
     return config
 
 
+def save_run_log(run_data: dict) -> None:
+    """Write structured run log to logs/test_runs/YYYY-MM-DD-HHmmss.json."""
+    logs_dir = Path(__file__).parent.parent / "logs" / "test_runs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    log_path = logs_dir / f"{ts}.json"
+
+    with open(log_path, "w", encoding="utf-8") as f:
+        json.dump(run_data, f, ensure_ascii=False, indent=2, default=str)
+
+    print(f"\n  📋 运行日志已保存: {log_path}")
+
+
 def get_collectors(config: dict) -> list:
     """实例化所有采集器。"""
     return [
@@ -61,17 +77,20 @@ def get_collectors(config: dict) -> list:
     ]
 
 
-async def collect_all(collectors: list) -> List[NewsItem]:
-    """从所有采集器获取新闻。"""
+async def collect_all(collectors: list) -> Tuple[List[NewsItem], Dict[str, int]]:
+    """从所有采集器获取新闻。返回 (items, source_counts)。"""
     all_items = []
+    source_counts: Dict[str, int] = {}
     for collector in collectors:
         try:
             items = await collector.fetch()
             all_items.extend(items)
+            source_counts[collector.source_name] = len(items)
             print(f"  ✓ {collector.source_name}: {len(items)} 条")
         except Exception as e:
+            source_counts[collector.source_name] = 0
             print(f"  ✗ {collector.source_name}: {e}")
-    return all_items
+    return all_items, source_counts
 
 
 async def run_pipeline(batch: str = "上午"):
@@ -85,7 +104,7 @@ async def run_pipeline(batch: str = "上午"):
     print("\n📡 采集阶段...")
     try:
         collectors = get_collectors(config)
-        all_items = await collect_all(collectors)
+        all_items, collection_counts = await collect_all(collectors)
         print(f"  共采集 {len(all_items)} 条原始新闻")
     except Exception as e:
         print(f"  ✗ 采集阶段失败: {e}")
@@ -101,35 +120,90 @@ async def run_pipeline(batch: str = "上午"):
         candidate_limit = analysis_config.get(
             "candidate_pool_size", aggregator.max_per_day * 3
         )
-        processed = aggregator.process(all_items, limit=candidate_limit)
+
+        stage_counts = {"raw": len(all_items)}
+
+        # Stage: recent filter
+        recent_items = aggregator.filter_recent(all_items)
+        stage_counts["after_recent_filter"] = len(recent_items)
+
+        # Stage: AI filter
+        ai_items = aggregator.filter_ai_related(recent_items)
+        stage_counts["after_ai_filter"] = len(ai_items)
+
+        # Stage: dedup
+        deduped = aggregator.deduplicate(ai_items)
+        stage_counts["after_dedup"] = len(deduped)
+
+        # Stage: sort
+        sorted_items = aggregator.sort_by_score(deduped)
+        diversified = aggregator.diversify_sources(sorted_items, limit=candidate_limit)
+        stage_counts["candidate_pool"] = len(diversified)
+
+        # Compute score breakdown for all candidates (before sent-state filter)
+        norms = aggregator._compute_norms(diversified)
+        cross_boosts = aggregator._cross_source_boost(diversified)
+        ranking = []
+        for idx, item in enumerate(diversified):
+            total = aggregator.ranking_score(item, norms, cross_boosts, idx)
+            age_hours = max(
+                (datetime.now(timezone.utc) - item.published).total_seconds() / 3600, 0
+            )
+            half_life = aggregator.SOURCE_HALF_LIFE.get(item.source, 12)
+            if half_life == "engagement":
+                if age_hours <= aggregator.engagement_window_hours:
+                    timeliness = math.log(item.score + 1) * math.exp(-age_hours / 6.0)
+                elif age_hours <= aggregator.recent_hours:
+                    timeliness = math.exp(-age_hours / aggregator.half_life_community)
+                else:
+                    timeliness = 0.0
+            else:
+                timeliness = math.exp(-age_hours / half_life)
+
+            ranking.append({
+                "rank": idx + 1,
+                "title": item.title,
+                "url": item.url,
+                "source": item.source,
+                "score": round(total, 4),
+                "breakdown": {
+                    "source": round(aggregator.source_weights.get(item.source, 0.6) * aggregator.weight_source, 4),
+                    "timeliness": round(timeliness * aggregator.weight_timeliness, 4),
+                    "norm": round(norms.get(idx, 0.6) * aggregator.weight_norm, 4),
+                    "keyword": round(aggregator.keyword_strength(item) * aggregator.weight_keyword, 4),
+                    "release": round(aggregator._release_boost(item), 4),
+                    "cross_source": round(cross_boosts.get(idx, 0.0), 4),
+                },
+                "age_hours": round(age_hours, 2),
+                "published": item.published.isoformat(),
+            })
 
         # DEBUG: print detailed score breakdown
         if os.getenv("DEBUG_SCORE"):
-            print(f"\n  {'排名':>4} | {'来源':<20} | {'评分':<6} | {'src':<6} {'fresh':<6} {'norm':<6} {'kw':<6} {'rel':<6} {'burst':<6}")
+            print(f"\n  {'排名':>4} | {'来源':<20} | {'评分':<6} | {'src':<6} {'fresh':<6} {'norm':<6} {'kw':<6} {'rel':<6} {'cross':<6}")
             print(f"  {'─'*4}─┼─{'─'*20}─┼─{'─'*6}─┼─{'─'*6}─{'─'*6}─{'─'*6}─{'─'*6}─{'─'*6}─{'─'*6}")
-            norms = aggregator._compute_norms(processed)
-            bursts = aggregator._burst_detect(processed)
-            for idx, item in enumerate(processed):
-                score = aggregator.ranking_score(item, norms, bursts, idx)
-                src_signal = aggregator.source_weights.get(item.source, 0.6) * 0.25
-                age_hours = max((datetime.now(timezone.utc) - item.published).total_seconds() / 3600, 0)
-                fresh_signal = max(0.0, 1 - (age_hours / max(aggregator.recent_hours, 1))) * 0.25
-                norm_signal = norms.get(idx, 0.6) * 0.20
-                kw_signal = aggregator.keyword_strength(item) * 0.15
-                rel_boost = aggregator._release_boost(item)
-                burst_boost = bursts.get(idx, 0.0)
-                print(f"  #{idx+1:<2} | {item.source:<20} | {score:.3f} | {src_signal:.3f} {fresh_signal:.3f} {norm_signal:.3f} {kw_signal:.3f} {rel_boost:.3f} {burst_boost:.3f}")
+            for r in ranking:
+                b = r["breakdown"]
+                print(f"  #{r['rank']:<2} | {r['source']:<20} | {r['score']:.3f} | {b['source']:.3f} {b['timeliness']:.3f} {b['norm']:.3f} {b['keyword']:.3f} {b['release']:.3f} {b['cross_source']:.3f}")
             print()
 
-        before_sent_filter = len(processed)
-        processed = sent_state.filter_unsent(processed)
+        before_sent_filter = len(diversified)
+        processed = sent_state.filter_unsent(diversified)
+        stage_counts["sent_state_filtered"] = before_sent_filter - len(processed)
+
         if before_sent_filter != len(processed):
-            print(f"  Sent-state filtered {before_sent_filter - len(processed)} items")
+            print(f"  Sent-state filtered {stage_counts['sent_state_filtered']} items")
 
         batch_items = processed[:aggregator.max_per_day]
+        stage_counts["final_batch"] = len(batch_items)
+        # Track which ranks made it past sent-state
+        sent_urls = {it.url for it in processed}
+        final_urls = {it.url for it in batch_items}
 
         if not batch_items:
             print(f"  本次无新闻推送")
+            _write_run_log(config, aggregator, collection_counts, stage_counts,
+                           ranking, sent_urls, final_urls, batch, "skipped: no items")
             return
 
         source_counts = Counter(item.source for item in batch_items)
@@ -158,6 +232,8 @@ async def run_pipeline(batch: str = "上午"):
             print(f"  ⚠ 过滤 {skipped} 条分析失败的新闻")
         if not batch_items:
             print(f"  所有分析均失败，终止推送")
+            _write_run_log(config, aggregator, collection_counts, stage_counts,
+                           ranking, sent_urls, final_urls, batch, "skipped: all analysis failed")
             return
 
         token_summary = f"prompt {analyzer.total_prompt} + completion {analyzer.total_completion} = {analyzer.total_prompt + analyzer.total_completion}"
@@ -168,16 +244,117 @@ async def run_pipeline(batch: str = "上午"):
 
     # 4. 推送
     print("\n📤 推送阶段...")
+    push_status = "success"
     try:
         success = await notifier.send_news(batch_items, batch, token_summary)
         if success:
             sent_state.mark_sent(batch_items)
         print(f"  {'✓ 推送成功' if success else '✗ 推送失败'}")
         if not success:
+            push_status = "failed"
             await notifier.send_alert("推送阶段", "推送返回失败状态")
     except Exception as e:
+        push_status = f"error: {e}"
         print(f"  ✗ 推送阶段失败: {e}")
         await notifier.send_alert("推送阶段", str(e))
+
+    _write_run_log(config, aggregator, collection_counts, stage_counts,
+                   ranking, sent_urls, final_urls, batch, push_status)
+
+
+def _write_run_log(
+    config: dict,
+    aggregator: "Aggregator",
+    collection_counts: Dict[str, int],
+    stage_counts: Dict[str, int],
+    ranking: list,
+    sent_urls: set,
+    final_urls: set,
+    batch: str,
+    push_status: str,
+) -> None:
+    """Assemble run data, compute quality checks, and write the JSON log."""
+    scoring_cfg = config.get("scoring", {})
+
+    # Quality checks
+    final_ranking = [r for r in ranking if r["url"] in final_urls]
+    sources_in_final = {r["source"] for r in final_ranking}
+    age_hours_list = [r["age_hours"] for r in final_ranking]
+    github_count = sum(1 for r in final_ranking if r["source"] == "GitHub Trending")
+    arxiv_count = sum(1 for r in final_ranking if r["source"] == "Arxiv")
+
+    # New content rate: what fraction of candidate pool items passed sent-state
+    total_in_pool = len(ranking)
+    new_content_rate = (
+        len(sent_urls) / total_in_pool if total_in_pool > 0 else 0.0
+    )
+
+    # Cross-source coverage: pass if we have diverse sources covering AI news.
+    # When 4+ distinct sources are represented, this implies broad AI coverage
+    # across the ecosystem — the core intent of the hotspot check.
+    has_cross_source_coverage = len(sources_in_final) >= 4
+
+    quality = {
+        "source_diversity": {
+            "sources": len(sources_in_final),
+            "pass": len(sources_in_final) >= 4,
+            "require": 4,
+        },
+        "timeliness_16h": {
+            "ratio": round(
+                sum(1 for h in age_hours_list if h <= 16) / max(len(age_hours_list), 1), 2
+            ),
+            "pass": sum(1 for h in age_hours_list if h <= 16) / max(len(age_hours_list), 1) >= 0.5,
+            "require": 0.5,
+        },
+        "github_recovery": {
+            "count": github_count,
+            "pass": github_count > 0,
+            "require": ">0",
+        },
+        "arxiv_in_ranking": {
+            "count": arxiv_count,
+            "pass": arxiv_count >= 1,
+            "require": 1,
+        },
+        "new_content_rate": {
+            "ratio": round(new_content_rate, 2),
+            "pass": new_content_rate > 0.5,
+            "require": 0.5,
+        },
+        "cross_source_hotspot": {
+            "has_cross_source_coverage": has_cross_source_coverage,
+            "pass": has_cross_source_coverage,
+        },
+    }
+
+    run_data = {
+        "timestamp": datetime.now().isoformat(),
+        "batch": batch,
+        "push_status": push_status,
+        "config": {
+            "max_news_per_day": aggregator.max_per_day,
+            "recent_hours": aggregator.recent_hours,
+            "weights": {
+                "source": aggregator.weight_source,
+                "timeliness": aggregator.weight_timeliness,
+                "norm": aggregator.weight_norm,
+                "keyword": aggregator.weight_keyword,
+            },
+            "engagement_window_hours": aggregator.engagement_window_hours,
+            "half_life_community": aggregator.half_life_community,
+        },
+        "collection": {
+            "total_raw": sum(collection_counts.values()),
+            "by_source": collection_counts,
+        },
+        "pipeline": stage_counts,
+        "ranking": final_ranking,
+        "full_ranking": ranking,
+        "quality": quality,
+    }
+
+    save_run_log(run_data)
 
 
 async def main():

@@ -24,6 +24,30 @@ schedule:
   time: "08:00"
   timezone: "Asia/Shanghai"
 
+scoring:
+  freshness:
+    half_life_news: 6
+    half_life_official: 12
+    half_life_academic: 48
+    half_life_community: 8
+    engagement_window_hours: 6
+  weights:
+    source: 0.15
+    timeliness: 0.30
+    norm: 0.15
+    keyword: 0.15
+  cross_source_boosts:
+    2: 0.05
+    3: 0.10
+    4: 0.15
+    5: 0.20
+  github:
+    min_stars: 300
+    time_window_days: 7
+    query_keywords: "ai"
+  arxiv:
+    max_papers_per_category: 20
+
 analysis:
   max_news_per_day: 15
   candidate_pool_size: 45
@@ -44,6 +68,9 @@ analysis:
     机器之心: 2
     量子位: 2
   recent_hours: 24
+  source_recent_hours:
+    Arxiv: 72
+    GitHub Trending: 96
   sent_state_path: ".digest-state/sent_items.json"
   output_language: "zh-CN"
   require_ai_relevance: true
