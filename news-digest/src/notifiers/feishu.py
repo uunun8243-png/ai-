@@ -457,3 +457,102 @@ class FeishuNotifier:
         except Exception as e:
             print(f"  ⚠ 发送告警失败: {e}")
             return False
+
+    def _build_monetization_card(self, items: List[NewsItem], batch_label: str) -> dict:
+        """构建变现项目的独立飞书卡片。"""
+        elements = []
+
+        for idx, it in enumerate(items):
+            a = it.analysis or {}
+            if not a or "error" in a:
+                continue
+
+            title_line = f"**🔥 项目 {idx + 1}：{it.title}**"
+            one_liner = a.get("one_liner", "")
+            if one_liner:
+                title_line += f"\n💡 {one_liner}"
+
+            elements.append({"tag": "hr"})
+            elements.append({
+                "tag": "div",
+                "text": {"tag": "lark_md", "content": title_line},
+            })
+
+            meta_lines = []
+            if a.get("business_model"):
+                meta_lines.append(f"💳 **商业模式**：{a['business_model']}")
+            if a.get("revenue_estimate"):
+                meta_lines.append(f"💰 **收入估算**：{a['revenue_estimate']}")
+            if a.get("target_users"):
+                meta_lines.append(f"👥 **目标用户**：{a['target_users']}")
+            if a.get("tech_stack"):
+                meta_lines.append(f"⚙️ **技术栈**：{a['tech_stack']}")
+            if meta_lines:
+                elements.append({
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": "\n".join(meta_lines)},
+                })
+
+            if a.get("why_it_works"):
+                elements.append({
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": f"**为什么能赚钱**\n{a['why_it_works']}"},
+                })
+            if a.get("china_adaptation"):
+                elements.append({
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": f"**国内借鉴**\n{a['china_adaptation']}"},
+                })
+            if a.get("action"):
+                elements.append({
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": f"📌 **{a['action']}**"},
+                })
+
+            elements.append({
+                "tag": "action",
+                "actions": [{
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "🔗 查看原文"},
+                    "type": "default",
+                    "url": it.url,
+                }],
+            })
+
+        if not elements:
+            elements.append({
+                "tag": "div",
+                "text": {"tag": "lark_md", "content": "本次暂无变现项目"},
+            })
+
+        return {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": f"💰 AI 变现项目 · {batch_label}"},
+                "template": "yellow",
+            },
+            "elements": elements,
+        }
+
+    async def send_monetization(self, items: List[NewsItem], batch_label: str = "上午") -> bool:
+        """发送变现项目独立卡片到飞书群。"""
+        if not self.app_id or not self.app_secret or not self.chat_id:
+            print("飞书 API 配置不完整")
+            return False
+        if not items:
+            print("无变现项目可推送")
+            return False
+
+        try:
+            token = await self._get_tenant_token()
+        except Exception as e:
+            print(f"  ✗ 获取飞书 token 失败: {e}")
+            return False
+
+        try:
+            card = self._build_monetization_card(items, batch_label)
+            await self._send_card(token, card)
+            return True
+        except Exception as e:
+            print(f"  ✗ 发送变现卡片失败: {e}")
+            return False
