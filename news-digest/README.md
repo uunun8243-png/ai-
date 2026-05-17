@@ -4,12 +4,14 @@
 
 ## 功能
 
-- 自动采集 14 个数据源：OpenAI/Anthropic/Google DeepMind/Meta AI/Google AI Blog、Arxiv、Hugging Face、Hacker News、GitHub Trending、VentureBeat AI、TechCrunch AI、Reddit、机器之心、量子位
+- 自动采集 11 个数据源：Arxiv、GitHub Trending、Hacker News、Reddit r/MachineLearning、TechCrunch AI、量子位等中文科技媒体、Hugging Face、Meta AI、Google DeepMind、VentureBeat AI、AI Blog
+- 指数半衰期新鲜度评分：按来源类型动态衰减（新闻6h/官方12h/学术48h），社区内容采用互动热度 Mode B
 - AI 相关性过滤：自动识别并过滤与 AI 无关的新闻，确保推送内容聚焦 AI 领域
-- 来源多样化排序：综合来源权威度、时效性、热度、AI 关键词匹配度四维评分，轮询去重避免单一来源霸榜
+- 来源多样化排序：综合来源权重、时效性（指数衰减）、归一化热度、AI 关键词匹配度四维评分，阶梯跨源 boost
 - 已发送状态追踪：自动记录已推送新闻，避免重复推送
 - DeepSeek API 按 11 维度框架逐条深度分析
 - 飞书群机器人推送，上午/下午各 15 条
+- 运行质量自动检查：每次推送后自动验证6项质量指标（来源多样性、时效性、GitHub/Arxiv覆盖等）
 
 ## 快速开始
 
@@ -61,17 +63,38 @@ python -m src.main
 
 ### 配置项
 
-编辑 `config.yaml` 可调整数据源开关、分析数量等。
+编辑 `config.yaml` 可调整数据源开关、评分参数、推送数量等。
+
+#### 分析 & 推送
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `analysis.max_news_per_day` | int | `15` | 每日最终推送的新闻数量 |
+| `analysis.max_news_per_day` | int | `15` | 每批最终推送的新闻数量 |
 | `analysis.candidate_pool_size` | int | `45` | 候选池大小，先选出候选再精选 |
-| `analysis.max_news_per_source` | int | `3` | 每个来源最多入选条数，避免单一来源霸榜 |
-| `analysis.recent_hours` | int | `24` | 只选取最近 N 小时内的新闻 |
+| `analysis.max_news_per_source` | int | `3` | 每个来源最多入选条数 |
+| `analysis.recent_hours` | int | `24` | 默认新闻时效窗口（小时） |
+| `analysis.source_recent_hours` | map | `{Arxiv: 72, GitHub: 96}` | 按源定制的时效窗口 |
 | `analysis.require_ai_relevance` | bool | `true` | 是否开启 AI 相关性过滤 |
 | `analysis.output_language` | str | `"zh-CN"` | 分析输出语言 |
-| `analysis.sent_state_path` | str | `".digest-state/sent_items.json"` | 已发送记录文件路径 |
+| `analysis.source_limits` | map | 各源上限 | 每个来源在单批中的最大条数 |
+
+#### 评分系统
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `scoring.weights.timeliness` | float | `0.30` | 时效性权重（最大因子） |
+| `scoring.weights.source` | float | `0.15` | 来源权威度权重 |
+| `scoring.weights.norm` | float | `0.15` | 热度归一化权重 |
+| `scoring.weights.keyword` | float | `0.15` | AI 关键词匹配权重 |
+| `scoring.freshness.half_life_news` | int | `6` | 新闻源半衰期（小时） |
+| `scoring.freshness.half_life_official` | int | `12` | 官方源半衰期 |
+| `scoring.freshness.half_life_academic` | int | `48` | 学术源半衰期 |
+| `scoring.freshness.half_life_community` | int | `8` | 社区源半衰期（Mode B 衰减） |
+| `scoring.freshness.engagement_window_hours` | int | `6` | 社区互动 Mode B 窗口 |
+| `scoring.cross_source_boosts` | map | `{2: 0.05, 3: 0.10, 5: 0.20}` | 跨源覆盖阶梯加分 |
+| `scoring.github.min_stars` | int | `300` | GitHub 仓库最低星数 |
+| `scoring.github.time_window_days` | int | `7` | 搜索时间范围（天） |
+| `scoring.github.query_keywords` | str | `"ai"` | GitHub 搜索关键词 |
 
 ## 项目结构
 
@@ -79,13 +102,14 @@ python -m src.main
 news-digest/
 ├── .github/workflows/daily-digest.yml  # GitHub Actions 配置
 ├── src/
-│   ├── main.py           # 入口与流水线编排
+│   ├── main.py           # 入口与流水线编排，含质量检查
 │   ├── models.py         # NewsItem 数据模型
-│   ├── aggregator.py     # AI 过滤/去重/四维排序/分批
+│   ├── aggregator.py     # AI 过滤/去重/评分/分批/跨源 boost
 │   ├── sent_state.py     # 已发送追踪，防止重复推送
 │   ├── analyzer.py       # DeepSeek API 分析
 │   ├── collectors/       # 各数据源采集器
 │   └── notifiers/        # 飞书推送
+├── logs/test_runs/       # 每次运行的 JSON 日志（含 quality checks）
 ├── config.yaml           # 全局配置
 ├── requirements.txt
 └── README.md
