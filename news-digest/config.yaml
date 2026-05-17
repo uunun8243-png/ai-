@@ -74,3 +74,19 @@ analysis:
   sent_state_path: ".digest-state/sent_items.json"
   output_language: "zh-CN"
   require_ai_relevance: true
+
+monetization:
+  enabled: true
+  max_per_day: 3
+  sources:
+    product_hunt: true
+    indie_hackers: true
+    reddit: true
+  websearch_fallback: true
+  sent_state_path: ".digest-state/monetization_sent_items.json"
+  source_weights:
+    Product Hunt: 1.0
+    IndieHackers: 1.0
+    Reddit: 0.8
+    Hacker News: 0.7
+    GitHub Trending: 0.6
