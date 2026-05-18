@@ -304,9 +304,6 @@ async def run_pipeline(batch: str = "上午"):
                     )
 
                     # 简化评分排序
-                    from datetime import datetime, timezone
-                    import math
-
                     source_weights = mon_config.get("source_weights", {})
                     now = datetime.now(timezone.utc)
 
