@@ -80,13 +80,10 @@ monetization:
   max_per_day: 3
   sources:
     product_hunt: true
-    indie_hackers: true
-    reddit: true
-  websearch_fallback: true
   sent_state_path: ".digest-state/monetization_sent_items.json"
   source_weights:
     Product Hunt: 1.0
-    IndieHackers: 1.0
-    Reddit: 0.8
-    Hacker News: 0.7
-    GitHub Trending: 0.6
+  # Product Hunt GraphQL API 质量门禁
+  product_hunt_topic: "ai"
+  product_hunt_min_votes: 300       # 最低投票数
+  product_hunt_max_vote_comment_ratio: 3  # 投票/评论比上限（防刷）

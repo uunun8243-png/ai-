@@ -22,18 +22,15 @@ def test_get_collectors_returns_all_types():
     assert "TechCrunch AI" in names
 
 
-def test_get_monetization_collectors_returns_correct_types():
+def test_get_monetization_collectors_returns_product_hunt():
     config = {
         "monetization": {"enabled": True},
-        "sources": {"product_hunt": True, "indie_hackers": True, "reddit": True},
+        "sources": {"product_hunt": True},
     }
     from src.main import get_monetization_collectors
     collectors = get_monetization_collectors(config)
-    assert len(collectors) == 3
-    names = [c.source_name for c in collectors]
-    assert "Product Hunt" in names
-    assert "IndieHackers" in names
-    assert "Reddit" in names
+    assert len(collectors) == 1
+    assert collectors[0].source_name == "Product Hunt"
 
 
 def test_get_monetization_collectors_disabled():

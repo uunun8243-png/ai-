@@ -24,7 +24,7 @@ from src.collectors.techcrunch_collector import TechCrunchCollector
 from src.aggregator import Aggregator
 from src.analyzer import Analyzer
 from src.sent_state import SentState
-from src.collectors.monetization_collector import ProductHuntCollector, IndieHackersCollector, RedditSideProjectCollector
+from src.collectors.monetization_collector import ProductHuntCollector
 from src.monetization_analyzer import MonetizationAnalyzer
 from src.notifiers.feishu import FeishuNotifier
 
@@ -44,6 +44,8 @@ def load_config() -> dict:
         config.setdefault("feishu", {})["app_secret"] = os.environ["FEISHU_APP_SECRET"]
     if os.getenv("FEISHU_CHAT_ID"):
         config.setdefault("feishu", {})["chat_id"] = os.environ["FEISHU_CHAT_ID"]
+    if os.getenv("PRODUCTHUNT_API_KEY"):
+        config.setdefault("monetization", {})["api_key"] = os.environ["PRODUCTHUNT_API_KEY"]
 
     return config
 
@@ -85,8 +87,6 @@ def get_monetization_collectors(config: dict) -> list:
         return []
     return [
         ProductHuntCollector(config),
-        IndieHackersCollector(config),
-        RedditSideProjectCollector(config),
     ]
 
 
@@ -378,10 +378,9 @@ def _write_run_log(
         len(sent_urls) / total_in_pool if total_in_pool > 0 else 0.0
     )
 
-    # Cross-source coverage: pass if we have diverse sources covering AI news.
-    # When 4+ distinct sources are represented, this implies broad AI coverage
-    # across the ecosystem — the core intent of the hotspot check.
-    has_cross_source_coverage = len(sources_in_final) >= 4
+    # Cross-source hotspot: count how many items in the final batch benefited
+    # from a cross-source boost (same story covered by 2+ sources).
+    boosted_count = sum(1 for r in final_ranking if r["breakdown"]["cross_source"] > 0)
 
     quality = {
         "source_diversity": {
@@ -412,8 +411,8 @@ def _write_run_log(
             "require": 0.5,
         },
         "cross_source_hotspot": {
-            "has_cross_source_coverage": has_cross_source_coverage,
-            "pass": has_cross_source_coverage,
+            "boosted_count": boosted_count,
+            "pass": boosted_count >= 1,
         },
     }
 
