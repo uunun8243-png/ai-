@@ -229,61 +229,61 @@ async def run_pipeline(batch: str = "上午"):
 
         if not batch_items:
             print(f"  本次无新闻推送")
-            _write_run_log(config, aggregator, collection_counts, stage_counts,
-                           ranking, sent_urls, final_urls, batch, "skipped: no items")
-            return
-
-        source_counts = Counter(item.source for item in batch_items)
-        source_summary = ", ".join(
-            f"{source}: {count}" for source, count in source_counts.items()
-        )
-        print(f"  处理后 {len(batch_items)} 条")
-        print(f"  来源分布: {source_summary}")
+            push_status = "skipped: no items"
+        else:
+            source_counts = Counter(item.source for item in batch_items)
+            source_summary = ", ".join(
+                f"{source}: {count}" for source, count in source_counts.items()
+            )
+            print(f"  处理后 {len(batch_items)} 条")
+            print(f"  来源分布: {source_summary}")
     except Exception as e:
         print(f"  ✗ 聚合阶段失败: {e}")
         await notifier.send_alert("聚合阶段", str(e))
-        return
+        push_status = f"aggregation error: {e}"
+        batch_items = []
 
-    # 3. 分析
-    print("\n🔍 分析阶段...")
-    try:
-        analyzer = Analyzer(config)
-        batch_items = await analyzer.analyze_batch(batch_items)
-        print(f"  完成 {len(batch_items)} 条分析")
+    # 3. 分析（仅当有新闻条目时）
+    if batch_items:
+        print("\n🔍 分析阶段...")
+        try:
+            analyzer = Analyzer(config)
+            batch_items = await analyzer.analyze_batch(batch_items)
+            print(f"  完成 {len(batch_items)} 条分析")
 
-        # 过滤分析失败的条目
-        before_filter = len(batch_items)
-        batch_items = [it for it in batch_items if it.analysis and "error" not in it.analysis]
-        skipped = before_filter - len(batch_items)
-        if skipped:
-            print(f"  ⚠ 过滤 {skipped} 条分析失败的新闻")
-        if not batch_items:
-            print(f"  所有分析均失败，终止推送")
-            _write_run_log(config, aggregator, collection_counts, stage_counts,
-                           ranking, sent_urls, final_urls, batch, "skipped: all analysis failed")
-            return
+            # 过滤分析失败的条目
+            before_filter = len(batch_items)
+            batch_items = [it for it in batch_items if it.analysis and "error" not in it.analysis]
+            skipped = before_filter - len(batch_items)
+            if skipped:
+                print(f"  ⚠ 过滤 {skipped} 条分析失败的新闻")
+            if not batch_items:
+                print(f"  所有分析均失败，终止推送")
+                push_status = "skipped: all analysis failed"
+            else:
+                token_summary = f"prompt {analyzer.total_prompt} + completion {analyzer.total_completion} = {analyzer.total_prompt + analyzer.total_completion}"
+        except Exception as e:
+            print(f"  ✗ 分析阶段失败: {e}")
+            await notifier.send_alert("分析阶段", str(e))
+            push_status = f"analysis error: {e}"
+            batch_items = []
 
-        token_summary = f"prompt {analyzer.total_prompt} + completion {analyzer.total_completion} = {analyzer.total_prompt + analyzer.total_completion}"
-    except Exception as e:
-        print(f"  ✗ 分析阶段失败: {e}")
-        await notifier.send_alert("分析阶段", str(e))
-        return
-
-    # 4. 推送
-    print("\n📤 推送阶段...")
-    push_status = "success"
-    try:
-        success = await notifier.send_news(batch_items, batch, token_summary)
-        if success:
-            sent_state.mark_sent(batch_items)
-        print(f"  {'✓ 推送成功' if success else '✗ 推送失败'}")
-        if not success:
-            push_status = "failed"
-            await notifier.send_alert("推送阶段", "推送返回失败状态")
-    except Exception as e:
-        push_status = f"error: {e}"
-        print(f"  ✗ 推送阶段失败: {e}")
-        await notifier.send_alert("推送阶段", str(e))
+    # 4. 推送（仅当有有效条目时）
+    if batch_items:
+        print("\n📤 推送阶段...")
+        push_status = "success"
+        try:
+            success = await notifier.send_news(batch_items, batch, token_summary)
+            if success:
+                sent_state.mark_sent(batch_items)
+            print(f"  {'✓ 推送成功' if success else '✗ 推送失败'}")
+            if not success:
+                push_status = "failed"
+                await notifier.send_alert("推送阶段", "推送返回失败状态")
+        except Exception as e:
+            push_status = f"error: {e}"
+            print(f"  ✗ 推送阶段失败: {e}")
+            await notifier.send_alert("推送阶段", str(e))
 
     # 5. 变现项目（独立流水线，失败不阻塞主流程）
     print("\n💰 变现项目阶段...")
