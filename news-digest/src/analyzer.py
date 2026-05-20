@@ -70,6 +70,7 @@ class Analyzer:
                         "model": self.model,
                         "messages": [{"role": "user", "content": prompt}],
                         "response_format": {"type": "json_object"},
+                        "max_tokens": 4096,
                     },
                     timeout=60.0,
                 )

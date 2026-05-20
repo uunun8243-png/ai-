@@ -9,13 +9,18 @@ class MemorySentState(SentState):
     def __init__(self, initial=None):
         self.saved_payload = None
         super().__init__("memory.json")
-        self._fingerprints = set(initial or [])
+        if isinstance(initial, dict):
+            self._fingerprints = dict(initial)
+        elif isinstance(initial, (list, set)):
+            self._fingerprints = {fp: None for fp in initial}
+        else:
+            self._fingerprints = {}
 
     def _load(self):
-        return set()
+        return {}
 
     def save(self):
-        self.saved_payload = {"fingerprints": sorted(self._fingerprints)}
+        self.saved_payload = {"fingerprints": dict(self._fingerprints)}
 
 
 def make_item(title: str, url: str) -> NewsItem:

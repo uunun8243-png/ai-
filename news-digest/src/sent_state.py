@@ -2,6 +2,7 @@
 import hashlib
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Set, Union
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -24,10 +25,17 @@ TRACKING_PARAMS = {
 
 
 class SentState:
-    """Local record of items that were already pushed."""
+    """Local record of items that were already pushed.
 
-    def __init__(self, path: Union[str, Path]):
+    Fingerprints are stored with timestamps.  Entries older than
+    *retention_hours* are pruned on load (default 48 h).
+    """
+
+    retention_hours = 48
+
+    def __init__(self, path: Union[str, Path], retention_hours: int = 48):
         self.path = Path(path)
+        self.retention_hours = retention_hours
         self._fingerprints = self._load()
 
     @classmethod
@@ -39,7 +47,8 @@ class SentState:
         path = Path(configured_path)
         if not path.is_absolute():
             path = Path(__file__).resolve().parent.parent / path
-        return cls(path)
+        retention = analysis_config.get("sent_state_retention_hours", 48)
+        return cls(path, retention_hours=retention)
 
     @staticmethod
     def normalize_url(url: str) -> str:
@@ -91,35 +100,58 @@ class SentState:
         }
 
     def filter_unsent(self, items: Iterable[NewsItem]) -> list[NewsItem]:
+        known = set(self._fingerprints)
         return [
             item
             for item in items
-            if self.fingerprints(item).isdisjoint(self._fingerprints)
+            if self.fingerprints(item).isdisjoint(known)
         ]
 
     def mark_sent(self, items: Iterable[NewsItem]) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
         for item in items:
-            self._fingerprints.update(self.fingerprints(item))
+            for fp in self.fingerprints(item):
+                self._fingerprints[fp] = now_iso
         self.save()
 
-    def _load(self) -> Set[str]:
+    def _load(self) -> dict:
+        """Load fingerprints, returning {hash: timestamp_iso_or_none, ...}.
+
+        Supports both the new dict format and the legacy list format.
+        Entries older than *retention_hours* are pruned.
+        """
         try:
             with self.path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError, OSError):
-            return set()
+            return {}
 
-        if isinstance(data, dict):
-            fingerprints = data.get("fingerprints", [])
-        else:
-            fingerprints = data
+        raw = data.get("fingerprints") if isinstance(data, dict) else data
 
-        if not isinstance(fingerprints, list):
-            return set()
-        return {fp for fp in fingerprints if isinstance(fp, str)}
+        if isinstance(raw, dict):
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=self.retention_hours)
+            result = {}
+            for fp, ts_str in raw.items():
+                if not isinstance(fp, str):
+                    continue
+                if isinstance(ts_str, str):
+                    try:
+                        ts = datetime.fromisoformat(ts_str)
+                        if ts >= cutoff:
+                            result[fp] = ts_str
+                    except (ValueError, TypeError):
+                        continue
+                else:
+                    # Legacy entry without a timestamp — keep it forever
+                    result[fp] = None
+            return result
+        elif isinstance(raw, list):
+            # Legacy list format — migrate to dict with null timestamps
+            return {fp: None for fp in raw if isinstance(fp, str)}
+        return {}
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"fingerprints": sorted(self._fingerprints)}
+        payload = {"fingerprints": self._fingerprints}
         with self.path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
